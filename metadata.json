@@ -1,0 +1,5 @@
+{
+  "name": "Arideo",
+  "description": "An AI-powered video generator that creates a professional, timestamped script, finds relevant media concepts, and synthesizes voiceovers based on your theme, culminating in an interactive video preview.",
+  "requestFramePermissions": []
+}
