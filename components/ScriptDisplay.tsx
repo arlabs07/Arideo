@@ -27,7 +27,7 @@ const ScriptDisplay: React.FC<ScriptDisplayProps> = ({ script, onGeneratePreview
   return (
     <div className="w-full max-w-4xl animate-fade-in-up">
        <div className="text-center mb-8">
-            <h2 className="text-3xl font-bold mt-1">Video Script for: "{theme}"</h2>
+            <h2 className="text-3xl font-bold mt-1 truncate" title={theme}>Video Script for: "{theme}"</h2>
             <p className="text-gray-400 mt-2">Review and edit the generated script below. When you're ready, proceed to the next step.</p>
         </div>
       <div className="space-y-6 max-h-[60vh] overflow-y-auto p-2">

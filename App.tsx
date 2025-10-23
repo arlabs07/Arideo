@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useMemo } from 'react';
-import { ScriptSegment, MediaAsset, VideoConfig, MusicSuggestion, MusicTrack } from './types';
+import { ScriptSegment, MediaAsset, VideoConfig, MusicSuggestion, MusicTrack, VideoMetadata } from './types';
 import * as geminiService from './services/geminiService';
 import { decodeAudioData, decode } from './utils/audioUtils';
 import PromptInput from './components/PromptInput';
@@ -9,9 +9,10 @@ import VideoPreview from './components/VideoPreview';
 import Loader from './components/Loader';
 import ResearchDisplay from './components/ResearchDisplay';
 import { CheckIcon } from './components/icons/CheckIcon';
-import { ArideoLogo } from './components/icons/ArideoLogo';
+import { ArideoLogo } from './ArideoLogo';
+import DownloadPage from './components/DownloadPage';
 
-type AppView = 'prompt' | 'generating';
+type AppView = 'prompt' | 'generating' | 'download';
 type AppStep = 'theme' | 'research' | 'script' | 'preview';
 
 const AppStepper: React.FC<{ currentStep: AppStep }> = ({ currentStep }) => {
@@ -19,7 +20,7 @@ const AppStepper: React.FC<{ currentStep: AppStep }> = ({ currentStep }) => {
     const stepNames: Record<Exclude<AppStep, 'theme'>, string> = {
         research: 'Research',
         script: 'Script',
-        preview: 'Video Preview'
+        preview: 'Customize'
     };
 
     const currentStepIndex = steps.indexOf(currentStep);
@@ -65,6 +66,7 @@ function App() {
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[] | null>(null);
   const [voiceovers, setVoiceovers] = useState<Map<string, AudioBuffer>>(new Map());
   const [watermark, setWatermark] = useState<string | null>(null);
+  const [initialImageAsset, setInitialImageAsset] = useState<string | null>(null);
   
   const [appView, setAppView] = useState<AppView>('prompt');
   const [currentStep, setCurrentStep] = useState<AppStep>('theme');
@@ -72,6 +74,9 @@ function App() {
   const [loadingMessage, setLoadingMessage] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [activeOverlay, setActiveOverlay] = useState<string | null>(null);
+
+  const [finalVideoUrl, setFinalVideoUrl] = useState<string | null>(null);
+  const [finalScript, setFinalScript] = useState<ScriptSegment[] | null>(null);
 
   const audioContext = useMemo(() => new (window.AudioContext || (window as any).webkitAudioContext)(), []);
 
@@ -96,17 +101,18 @@ function App() {
     }
   }, []);
 
-  const handleGenerateFromPrompt = async (prompt: string, newWatermark: string | null) => {
+  const handleGenerateFromPrompt = async (prompt: string, newWatermark: string | null, userImage: string | null) => {
     setWatermark(newWatermark);
+    setInitialImageAsset(userImage);
     setIsLoading(true);
     setError(null);
     setLoadingMessage("Understanding your video idea...");
     setAppView('generating');
     setCurrentStep('theme');
-
+    
     try {
-        const { theme: parsedTheme, ...parsedConfig } = await geminiService.parsePromptForConfig(prompt);
-        await handleResearch(parsedTheme, parsedConfig);
+      const { theme: parsedTheme, ...parsedConfig } = await geminiService.parsePromptForConfig(prompt);
+      await handleResearch(parsedTheme, parsedConfig);
     } catch (e) {
         console.error('Prompt parsing or research failed:', e);
         setError(e instanceof Error ? e.message : 'Could not understand your prompt. Please be more specific.');
@@ -117,7 +123,7 @@ function App() {
   
   const handleGenerateFromOverlay = (prompt: string, newWatermark: string | null) => {
     setActiveOverlay(null);
-    handleGenerateFromPrompt(prompt, newWatermark);
+    handleGenerateFromPrompt(prompt, newWatermark, null);
   };
 
 
@@ -185,16 +191,24 @@ function App() {
       for (const [index, segment] of script.entries()) {
           const sceneNum = index + 1;
           const totalScenes = script.length;
+          const visualPrompt = segment.visuals.trim();
           
           setLoadingMessage(`[${sceneNum}/${totalScenes}] Generating visual...`);
-          const visualUrl = await geminiService.generateVisual(segment.visuals);
+          
+          let mediaUrl: string;
+          if (index === 0 && initialImageAsset) {
+              mediaUrl = initialImageAsset;
+              setInitialImageAsset(null); // Consume the image
+          } else {
+              mediaUrl = await geminiService.generateVisual(visualPrompt);
+          }
           
           setLoadingMessage(`[${sceneNum}/${totalScenes}] Synthesizing voice...`);
           const audioB64 = await geminiService.generateVoiceover(segment.narration, voiceName);
           const decodedAudio = decode(audioB64);
           const audioBuffer = await decodeAudioData(decodedAudio, audioContext, 24000, 1);
 
-          newMediaAssets.push({ segmentId: segment.id, type: 'image' as const, url: visualUrl, description: segment.visuals });
+          newMediaAssets.push({ segmentId: segment.id, type: 'image', url: mediaUrl, description: visualPrompt });
           newVoiceovers.set(segment.id, audioBuffer);
       }
       
@@ -207,8 +221,14 @@ function App() {
     } finally {
       setIsLoading(false);
     }
-  }, [script, audioContext, theme, musicSuggestion, videoConfig]);
+  }, [script, audioContext, theme, musicSuggestion, videoConfig, initialImageAsset]);
   
+  const handleFinalize = (videoUrl: string, finalScript: ScriptSegment[]) => {
+    setFinalVideoUrl(videoUrl);
+    setFinalScript(finalScript);
+    setAppView('download');
+  };
+
   const handleReset = () => {
     setTheme('');
     setVideoConfig(null);
@@ -218,10 +238,13 @@ function App() {
     setSelectedMusic(null);
     setMediaAssets(null);
     setVoiceovers(new Map());
+    setFinalVideoUrl(null);
+    setFinalScript(null);
     setCurrentStep('theme');
     setError(null);
     setIsLoading(false);
     setWatermark(null);
+    setInitialImageAsset(null);
     setAppView('prompt');
   };
 
@@ -236,18 +259,40 @@ function App() {
       case 'script':
         return script && <ScriptDisplay script={script} onGeneratePreview={handlePreviewGeneration} onScriptChange={handleScriptChange} theme={theme} />;
       case 'preview':
-        return script && mediaAssets && videoConfig && <VideoPreview script={script} mediaAssets={mediaAssets} voiceovers={voiceovers} audioContext={audioContext} onReset={handleReset} theme={theme} config={videoConfig} watermark={watermark} musicSuggestion={musicSuggestion} selectedMusic={selectedMusic} />;
+        return script && mediaAssets && videoConfig && <VideoPreview script={script} mediaAssets={mediaAssets} voiceovers={voiceovers} audioContext={audioContext} onReset={handleReset} theme={theme} config={videoConfig} watermark={watermark} musicSuggestion={musicSuggestion} selectedMusic={selectedMusic} onFinalize={handleFinalize} setScript={setScript} setMediaAssets={setMediaAssets} setVoiceovers={setVoiceovers} setSelectedMusic={setSelectedMusic} />;
       default:
          return <Loader message={loadingMessage} />;
     }
   };
+  
+  const renderContent = () => {
+    switch (appView) {
+      case 'prompt':
+        return <PromptInput onGenerate={handleGenerateFromPrompt} initialWatermark={watermark} onOpenOverlay={setActiveOverlay} />;
+      case 'generating':
+        return (
+          <div className="w-full">
+            <div className="container mx-auto px-4 md:px-8 pt-8">
+              <AppStepper currentStep={currentStep} />
+            </div>
+            <div className="mt-8">
+              {renderGenerationContent()}
+            </div>
+          </div>
+        );
+      case 'download':
+        return finalVideoUrl && finalScript && videoConfig && <DownloadPage videoUrl={finalVideoUrl} script={finalScript} config={videoConfig} theme={theme} onReset={handleReset} />;
+      default:
+        return null;
+    }
+  }
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col">
-      <header className="py-6 px-4 sm:px-8 absolute top-0 left-0 w-full z-30">
+      <header className="py-6 px-4 sm:px-8 fixed top-0 left-0 w-full z-30 bg-black">
         <div className="container mx-auto flex justify-between items-center">
           <ArideoLogo className="h-8 w-auto" />
-          {appView === 'generating' && (
+          {appView !== 'prompt' && (
              <button onClick={handleReset} className="text-sm bg-indigo-600 hover:bg-indigo-700 rounded-md px-4 py-2 transition-colors duration-300 shadow-lg hover:shadow-indigo-500/50">
                 Start New Project
             </button>
@@ -255,7 +300,7 @@ function App() {
         </div>
       </header>
       
-      <main className="flex-grow container mx-auto p-4 md:p-8 flex flex-col items-center justify-center">
+      <main className="flex-grow container mx-auto p-4 md:p-8 flex flex-col items-center justify-center pt-28">
         {error && (
           <div className="bg-red-900 border border-red-700 text-red-200 px-4 py-3 rounded-lg relative mb-6 w-full max-w-4xl animate-fade-in" role="alert">
             <strong className="font-bold">Error: </strong>
@@ -266,20 +311,9 @@ function App() {
           </div>
         )}
         
-        {appView === 'prompt' && <PromptInput onGenerate={handleGenerateFromPrompt} initialWatermark={watermark} onOpenOverlay={setActiveOverlay} />}
-
         {activeOverlay && <Overlay activeOverlay={activeOverlay} onClose={() => setActiveOverlay(null)} onGenerate={handleGenerateFromOverlay} watermark={watermark} />}
 
-        {appView === 'generating' && (
-          <div className="w-full">
-            <div className="container mx-auto px-4 md:px-8 pt-8">
-              <AppStepper currentStep={currentStep} />
-            </div>
-            <div className="mt-8">
-              {renderGenerationContent()}
-            </div>
-          </div>
-        )}
+        {renderContent()}
       </main>
     </div>
   );

@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { VoiceIcon } from './icons/VoiceIcon';
-import { MusicNoteIcon } from './icons/MusicNoteIcon';
 import { SubtitlesIcon } from './icons/SubtitlesIcon';
-import { VisualsIcon } from './icons/VisualsIcon';
 import { CheckIcon } from './icons/CheckIcon';
-import { CloseIcon } from './icons/CloseIcon';
+import { CloseIcon } from './CloseIcon';
+import { AspectRatioIcon } from './icons/AspectRatioIcon';
+import { TimingIcon } from './icons/TimingIcon';
 
 interface OverlayProps {
   activeOverlay: string;
@@ -39,54 +39,42 @@ const voices = [
     { id: 'Fenrir', name: 'Fenrir', description: 'Female, Energetic' },
 ];
 
-const settingButtonsConfig = [
-    { id: 'voice', icon: VoiceIcon, text: 'Voice Actors' },
-    { id: 'music', icon: MusicNoteIcon, text: 'Music Preference' },
-    { id: 'subtitles', icon: SubtitlesIcon, text: 'Subtitles' },
-    { id: 'visuals', icon: VisualsIcon, text: 'Visual Style' },
+const aspectRatios = [
+    { id: '9:16', name: 'Portrait' },
+    { id: '16:9', name: 'Landscape' },
+    { id: '1:1', name: 'Square' },
 ];
 
-const CustomSelect = ({ options, value, onChange, id, activeDropdown, setActiveDropdown }) => {
-    const isOpen = activeDropdown === id;
-    const selectedLabel = options.find(opt => opt.value === value)?.label || '';
-    const dropdownRef = useRef<HTMLDivElement>(null);
+const durations = [
+    { id: '15', name: '15s' },
+    { id: '30', name: '30s' },
+    { id: '60', name: '60s' },
+    { id: '180', name: '3min' },
+];
 
-    useEffect(() => {
-        const handleClickOutside = (event: MouseEvent) => {
-            if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-                setActiveDropdown(null);
-            }
-        };
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, [id, setActiveDropdown]);
 
-    return (
-        <div className="relative inline-block" ref={dropdownRef}>
+const settingButtonsConfig = [
+    { id: 'voice', icon: VoiceIcon, text: 'Voice Actor' },
+    { id: 'timing', icon: TimingIcon, text: 'Timing' },
+    { id: 'aspectRatio', icon: AspectRatioIcon, text: 'Aspect Ratio' },
+    { id: 'subtitles', icon: SubtitlesIcon, text: 'Subtitles' },
+];
+
+const OptionButtonGroup = ({ options, selected, onSelect, className = '' }: { options: { id: string, name: string}[], selected: string, onSelect: (id: string) => void, className?: string}) => (
+    <div className={`flex items-center gap-2 p-1 bg-gray-900/50 rounded-lg ${className}`}>
+        {options.map(opt => (
             <button
+                key={opt.id}
                 type="button"
-                className="bg-transparent border-b-2 border-gray-500 hover:border-gray-400 focus:border-indigo-500 focus:outline-none transition-colors py-1 px-2 font-semibold text-white"
-                onClick={() => setActiveDropdown(isOpen ? null : id)}
+                onClick={() => onSelect(opt.id)}
+                className={`px-3 py-1 text-sm rounded-md transition-all duration-200 ${selected === opt.id ? 'bg-indigo-600 text-white shadow' : 'text-gray-300 hover:bg-gray-700'}`}
             >
-                {selectedLabel} &#9662;
+                {opt.name}
             </button>
-            {isOpen && (
-                <div className="absolute z-10 mt-2 w-48 bg-gray-800 border border-gray-700 rounded-md shadow-lg">
-                    {options.map(opt => (
-                        <button
-                            key={opt.value}
-                            type="button"
-                            className="block w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-indigo-600"
-                            onClick={() => { onChange(opt.value); setActiveDropdown(null); }}
-                        >
-                            {opt.label}
-                        </button>
-                    ))}
-                </div>
-            )}
-        </div>
-    );
-};
+        ))}
+    </div>
+);
+
 
 const Overlay: React.FC<OverlayProps> = ({ activeOverlay, onClose, onGenerate, watermark }) => {
     useEffect(() => {
@@ -102,31 +90,32 @@ const Overlay: React.FC<OverlayProps> = ({ activeOverlay, onClose, onGenerate, w
     const [extraInfo, setExtraInfo] = useState('');
     const [script, setScript] = useState('');
     const [product, setProduct] = useState('');
-    const [duration, setDuration] = useState('30');
-    const [platform, setPlatform] = useState('YouTube Shorts');
-    const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
-
+    
     // Settings state
     const [settings, setSettings] = useState({
         voice: 'Puck',
-        musicPreference: '',
         subtitles: true,
-        visualStyle: 'Generative AI',
+        aspectRatio: '9:16',
+        duration: '30'
     });
     const [activeSetting, setActiveSetting] = useState<string | null>(null);
 
     useEffect(() => {
         // Reset state when overlay changes
         setTopic(''); setExtraInfo(''); setScript(''); setProduct('');
-        setActiveDropdown(null); setActiveSetting(null);
-        setSettings({ voice: 'Puck', musicPreference: '', subtitles: true, visualStyle: 'Generative AI' });
+        setActiveSetting(null);
         
+        let newAspectRatio = '9:16';
+        let newDuration = '30';
+
         switch(activeOverlay) {
-            case 'short': setDuration('30'); setPlatform('YouTube Shorts'); break;
-            case 'explainer': setDuration('180'); setPlatform('YouTube'); break;
-            case 'script': setPlatform('YouTube'); break;
-            case 'ad': setDuration('30'); setPlatform('TikTok'); break;
+            case 'short': newAspectRatio = '9:16'; newDuration = '30'; break;
+            case 'explainer': newAspectRatio = '16:9'; newDuration = '180'; break;
+            case 'script': newAspectRatio = '16:9'; newDuration = '60'; break;
+            case 'ad': newAspectRatio = '9:16'; newDuration = '30'; break;
         }
+        setSettings({ voice: 'Puck', subtitles: true, aspectRatio: newAspectRatio, duration: newDuration });
+
     }, [activeOverlay]);
 
     const config = overlayConfig[activeOverlay as keyof typeof overlayConfig];
@@ -136,19 +125,19 @@ const Overlay: React.FC<OverlayProps> = ({ activeOverlay, onClose, onGenerate, w
         e.preventDefault();
         let basePrompt = '';
         switch(activeOverlay) {
-            case 'short': basePrompt = `Create a ${duration}-second video for ${platform} about "${topic}".`; break;
-            case 'explainer': basePrompt = `Create a ${duration}-second explainer video for ${platform} about "${topic}". Additional info: ${extraInfo}`; break;
-            case 'script': basePrompt = `Create a video for ${platform} using exactly this script: "${script}"`; break;
-            case 'ad': basePrompt = `Create a ${duration}-second UGC ad for the product "${product}" for ${platform}.`; break;
+            case 'short': basePrompt = `Create a short video about "${topic}".`; break;
+            case 'explainer': basePrompt = `Create an explainer video about "${topic}". Additional info: ${extraInfo}`; break;
+            case 'script': basePrompt = `Create a video using exactly this script: "${script}"`; break;
+            case 'ad': basePrompt = `Create a UGC ad for the product "${product}".`; break;
         }
 
         const settingsText = `
 ---
 Video Settings:
+- Duration: ${settings.duration} seconds
+- Aspect Ratio: ${settings.aspectRatio}
 - Voice Actor: ${settings.voice}
-- Music Preference: ${settings.musicPreference || 'AI Selected based on mood'}
 - Subtitles: ${settings.subtitles ? 'Yes' : 'No'}
-- Visual Style: ${settings.visualStyle}
 ---
         `;
 
@@ -159,54 +148,37 @@ Video Settings:
         switch(activeOverlay) {
             case 'short':
                 return (
-                    <>
-                        <div className="text-lg mb-4 text-gray-300">
-                            Create a&nbsp;
-                            <CustomSelect id="duration" activeDropdown={activeDropdown} setActiveDropdown={setActiveDropdown} value={duration} onChange={setDuration} options={[ { value: '15', label: '15 second' }, { value: '30', label: '30 second' }, { value: '60', label: '1 minute' } ]}/>
-                            &nbsp;video for&nbsp;
-                            <CustomSelect id="platform" activeDropdown={activeDropdown} setActiveDropdown={setActiveDropdown} value={platform} onChange={setPlatform} options={[ { value: 'YouTube Shorts', label: 'YouTube Shorts' }, { value: 'TikTok', label: 'TikTok' }, { value: 'Instagram Reels', label: 'Instagram Reels' }]} />
-                            &nbsp;about
-                        </div>
-                        <textarea value={topic} onChange={e => setTopic(e.target.value)} placeholder="Type your topic here" className="w-full h-24 bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all resize-none" required />
-                    </>
+                    <div>
+                        <label className="font-semibold mb-2 block text-gray-300">Topic:</label>
+                        <textarea value={topic} onChange={e => setTopic(e.target.value)} placeholder="e.g., The history of the Eiffel Tower" className="w-full h-24 bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all resize-none" required />
+                    </div>
                 );
             case 'explainer':
                 return (
-                     <>
-                        <div className="text-lg mb-4 text-gray-300">
-                             Create a&nbsp;
-                            <CustomSelect id="duration" activeDropdown={activeDropdown} setActiveDropdown={setActiveDropdown} value={duration} onChange={setDuration} options={[ { value: '60', label: '1 minute' }, { value: '180', label: '3 minutes' }, { value: '300', label: '5 minutes' } ]}/>
-                            &nbsp;video for&nbsp;
-                            <CustomSelect id="platform" activeDropdown={activeDropdown} setActiveDropdown={setActiveDropdown} value={platform} onChange={setPlatform} options={[ { value: 'YouTube', label: 'YouTube' }, { value: 'Vimeo', label: 'Vimeo' }, { value: 'a Website', label: 'a Website' }]} />
-                            &nbsp;about
+                     <div className="space-y-4">
+                        <div>
+                            <label className="font-semibold mb-2 block text-gray-300">Topic:</label>
+                            <textarea value={topic} onChange={e => setTopic(e.target.value)} placeholder="e.g., How does photosynthesis work?" className="w-full h-24 bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all resize-none" required />
                         </div>
-                        <textarea value={topic} onChange={e => setTopic(e.target.value)} placeholder="Type your topic here" className="w-full h-24 bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all resize-none mb-4" required />
-                        <textarea value={extraInfo} onChange={e => setExtraInfo(e.target.value)} placeholder="Add relevant information and opinions about the video." className="w-full h-24 bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all resize-none" />
+                         <div>
+                            <label className="font-semibold mb-2 block text-gray-300">Additional Info:</label>
+                            <textarea value={extraInfo} onChange={e => setExtraInfo(e.target.value)} placeholder="Add relevant information, key points to cover, and opinions for the video." className="w-full h-24 bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all resize-none" />
+                        </div>
                     </>
                 );
             case 'script':
                 return (
-                     <>
-                        <div className="text-lg mb-4 text-gray-300">
-                             Create a video for&nbsp;
-                            <CustomSelect id="platform" activeDropdown={activeDropdown} setActiveDropdown={setActiveDropdown} value={platform} onChange={setPlatform} options={[ { value: 'YouTube', label: 'YouTube' }, { value: 'TikTok', label: 'TikTok' }, { value: 'Instagram', label: 'Instagram' } ]} />
-                            &nbsp;using exactly this script
-                        </div>
-                        <textarea value={script} onChange={e => setScript(e.target.value)} placeholder="Paste your script here" className="w-full h-40 bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all resize-none" required />
-                    </>
+                     <div>
+                        <label className="font-semibold mb-2 block text-gray-300">Script:</label>
+                        <textarea value={script} onChange={e => setScript(e.target.value)} placeholder="Paste your full video script here." className="w-full h-40 bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all resize-none" required />
+                    </div>
                 );
             case 'ad':
                 return (
-                    <>
-                        <div className="text-lg mb-4 text-gray-300">
-                            Create a&nbsp;
-                            <CustomSelect id="duration" activeDropdown={activeDropdown} setActiveDropdown={setActiveDropdown} value={duration} onChange={setDuration} options={[ { value: '15', label: '15 second' }, { value: '30', label: '30 second' }, { value: '45', label: '45 second' } ]}/>
-                            &nbsp;UGC Ad for&nbsp;
-                            <CustomSelect id="platform" activeDropdown={activeDropdown} setActiveDropdown={setActiveDropdown} value={platform} onChange={setPlatform} options={[ { value: 'TikTok', label: 'TikTok' }, { value: 'Instagram', label: 'Instagram' }, { value: 'Facebook', label: 'Facebook' } ]} />
-                            &nbsp;about
-                        </div>
-                        <textarea value={product} onChange={e => setProduct(e.target.value)} placeholder="Your product or service" className="w-full h-24 bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all resize-none" required />
-                    </>
+                     <div>
+                        <label className="font-semibold mb-2 block text-gray-300">Product / Service:</label>
+                        <textarea value={product} onChange={e => setProduct(e.target.value)} placeholder="e.g., 'A new productivity app called FlowState'" className="w-full h-24 bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all resize-none" required />
+                    </div>
                 );
             default: return null;
         }
@@ -236,11 +208,19 @@ Video Settings:
                     </div>
                 );
                 break;
-            case 'music':
+            case 'timing':
                 content = (
                     <div>
-                        <label htmlFor="music-pref" className="font-semibold mb-2 block">Music Preference</label>
-                        <input id="music-pref" type="text" value={settings.musicPreference} onChange={e => handleUpdate('musicPreference', e.target.value)} placeholder="e.g., upbeat, cinematic, lo-fi beats" className="w-full bg-gray-700 border border-gray-600 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+                        <h4 className="font-semibold mb-3">Video Duration</h4>
+                        <OptionButtonGroup options={durations} selected={settings.duration} onSelect={(id) => handleUpdate('duration', id)} />
+                    </div>
+                );
+                break;
+            case 'aspectRatio':
+                content = (
+                    <div>
+                        <h4 className="font-semibold mb-3">Aspect Ratio</h4>
+                        <OptionButtonGroup options={aspectRatios} selected={settings.aspectRatio} onSelect={(id) => handleUpdate('aspectRatio', id)} />
                     </div>
                 );
                 break;
@@ -253,20 +233,6 @@ Video Settings:
                             <button type="button" role="switch" aria-checked={settings.subtitles} onClick={() => handleUpdate('subtitles', !settings.subtitles)} className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${settings.subtitles ? 'bg-indigo-600' : 'bg-gray-600'}`}>
                                 <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${settings.subtitles ? 'translate-x-6' : 'translate-x-1'}`} />
                             </button>
-                        </div>
-                    </div>
-                );
-                break;
-            case 'visuals':
-                 content = (
-                    <div>
-                        <h4 className="font-semibold mb-3">Visual Style</h4>
-                        <div className="flex gap-3">
-                            {['Generative AI', 'Stock Footage'].map(style => (
-                                <button key={style} type="button" onClick={() => handleUpdate('visualStyle', style)} className={`flex-1 p-3 rounded-lg transition-all ${settings.visualStyle === style ? 'bg-indigo-600 ring-2 ring-indigo-400' : 'bg-gray-700 hover:bg-gray-600'}`}>
-                                    {style}
-                                </button>
-                            ))}
                         </div>
                     </div>
                 );
@@ -284,14 +250,14 @@ Video Settings:
 
     return (
       <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-40 flex items-center justify-center p-4" onClick={onClose}>
-        <div className="bg-[#101010] rounded-2xl w-full max-w-2xl max-h-[90vh] shadow-2xl shadow-indigo-900/20 border border-gray-800 flex flex-col animate-fade-in-up" onClick={e => e.stopPropagation()}>
+        <div className="bg-[#101010] rounded-2xl w-full max-w-2xl max-h-[90vh] shadow-2xl shadow-indigo-900/20 border border-gray-800 flex flex-col animate-fade-in-up overflow-hidden" onClick={e => e.stopPropagation()}>
           <div className="relative h-48 flex-shrink-0">
              <img src={config.backgroundImage} alt={config.title} className="w-full h-full object-cover"/>
              <div className="absolute inset-0 bg-gradient-to-t from-[#101010] to-transparent"></div>
              <button onClick={onClose} className="absolute top-4 right-4 text-white/70 hover:text-white text-3xl z-10">&times;</button>
              <h2 className="absolute bottom-6 left-6 text-3xl font-bold">{config.title}</h2>
           </div>
-          <form onSubmit={handleSubmit} className="p-6 space-y-6 overflow-y-auto">
+          <form onSubmit={handleSubmit} className="flex-grow p-6 space-y-6 overflow-y-auto">
             <div className="space-y-4">
               {renderFormFields()}
             </div>
@@ -301,7 +267,7 @@ Video Settings:
               <div className="flex flex-wrap gap-2">
                 {settingButtonsConfig.map(s => {
                     const isActive = activeSetting === s.id;
-                    const isSet = (settings[s.id as keyof typeof settings] && settings[s.id as keyof typeof settings] !== (s.id === 'subtitles' ? false : '')) || s.id === 'voice'; // Voice always has a default
+                    const isSet = !!settings[s.id as keyof typeof settings] || s.id === 'voice';
                     return (
                         <button key={s.id} type="button" onClick={() => setActiveSetting(isActive ? null : s.id)} className={`flex items-center gap-2 px-3 py-2 border rounded-md transition-colors text-sm ${isActive ? 'bg-indigo-600 border-indigo-500 text-white' : isSet ? 'bg-gray-700 border-gray-600 text-gray-200 hover:bg-gray-600' : 'bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700'}`}>
                             <s.icon className={`w-4 h-4 ${isActive ? 'text-white' : isSet ? 'text-indigo-300' : 'text-gray-500'}`} />
@@ -313,8 +279,7 @@ Video Settings:
               </div>
               {renderSettingsPanel()}
             </div>
-
-            <div className="flex justify-end items-center gap-4 pt-4 sticky bottom-0 bg-[#101010] -mx-6 -mb-6 px-6 pb-6">
+            <div className="flex justify-end items-center gap-4 pt-6">
               <button type="button" onClick={onClose} className="text-gray-400 hover:text-white transition-colors px-6 py-2">Back</button>
               <button type="submit" className="bg-blue-600 text-white font-semibold rounded-lg px-8 py-3 hover:bg-blue-700 disabled:bg-gray-700 transition-all transform hover:scale-105">Proceed</button>
             </div>

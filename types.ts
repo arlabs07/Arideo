@@ -9,7 +9,7 @@ export interface ScriptSegment {
 
 export interface MediaAsset {
   segmentId: string;
-  type: 'image' | 'gif' | 'video';
+  type: 'image';
   url: string;
   description: string;
 }
@@ -44,4 +44,14 @@ export interface VideoMetadata {
     title: string;
   }[];
   tags: string[];
+}
+
+export interface ChatMessage {
+    role: 'user' | 'model';
+    parts: { text: string }[];
+}
+
+export interface ToolCall {
+    name: string;
+    args: any;
 }

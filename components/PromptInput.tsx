@@ -6,9 +6,8 @@ import { ScriptIcon } from './icons/ScriptIcon';
 import { AdIcon } from './icons/AdIcon';
 import { MagicIcon } from './icons/MagicIcon';
 
-
 interface PromptInputProps {
-  onGenerate: (prompt: string, watermark: string | null) => void;
+  onGenerate: (prompt: string, watermark: string | null, userImage: string | null) => void;
   initialWatermark: string | null;
   onOpenOverlay: (overlayId: string) => void;
 }
@@ -23,12 +22,14 @@ const presetButtons = [
 const PromptInput: React.FC<PromptInputProps> = ({ onGenerate, initialWatermark, onOpenOverlay }) => {
   const [prompt, setPrompt] = useState('');
   const [watermark, setWatermark] = useState<string | null>(initialWatermark);
+  const [userImage, setUserImage] = useState<string | null>(null);
   const watermarkInputRef = useRef<HTMLInputElement>(null);
+  const userImageInputRef = useRef<HTMLInputElement>(null);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (prompt.trim()) {
-      onGenerate(prompt.trim(), watermark);
+      onGenerate(prompt.trim(), watermark, userImage);
     }
   };
 
@@ -38,6 +39,17 @@ const PromptInput: React.FC<PromptInputProps> = ({ onGenerate, initialWatermark,
       const reader = new FileReader();
       reader.onload = (event) => {
         setWatermark(event.target?.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleUserImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setUserImage(event.target?.result as string);
       };
       reader.readAsDataURL(file);
     }
@@ -81,6 +93,23 @@ const PromptInput: React.FC<PromptInputProps> = ({ onGenerate, initialWatermark,
                     <UploadIcon className="w-5 h-5" />
                     <span className="hidden sm:inline">{watermark ? 'Change' : 'Add'} Watermark</span>
                 </button>
+
+                 <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleUserImageUpload}
+                    ref={userImageInputRef}
+                />
+                <button
+                    type="button"
+                    onClick={() => userImageInputRef.current?.click()}
+                    className="flex items-center gap-2 px-3 py-2 border border-gray-600 text-gray-300 hover:bg-gray-700 rounded-full transition-colors text-sm"
+                >
+                    <UploadIcon className="w-5 h-5" />
+                    <span className="hidden sm:inline">{userImage ? 'Change' : 'Upload'} Asset</span>
+                </button>
+
                 {watermark && (
                     <div className="relative group">
                         <img src={watermark} alt="Watermark preview" className="h-8 w-auto rounded-sm"/>
@@ -89,6 +118,19 @@ const PromptInput: React.FC<PromptInputProps> = ({ onGenerate, initialWatermark,
                             onClick={() => setWatermark(null)}
                             className="absolute -top-2 -right-2 bg-red-600 text-white rounded-full h-5 w-5 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity"
                             aria-label="Remove watermark"
+                        >
+                            &#x2715;
+                        </button>
+                    </div>
+                )}
+                 {userImage && (
+                    <div className="relative group">
+                        <img src={userImage} alt="User asset preview" className="h-8 w-auto rounded-sm"/>
+                        <button 
+                            type="button" 
+                            onClick={() => setUserImage(null)}
+                            className="absolute -top-2 -right-2 bg-red-600 text-white rounded-full h-5 w-5 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                            aria-label="Remove user asset"
                         >
                             &#x2715;
                         </button>

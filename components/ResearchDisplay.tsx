@@ -14,7 +14,7 @@ const ResearchDisplay: React.FC<ResearchDisplayProps> = ({ researchData, onConti
   return (
     <div className="w-full max-w-4xl animate-fade-in">
       <div className="text-center mb-10">
-        <h2 className="text-3xl font-bold mt-1">Research for: "{theme}"</h2>
+        <h2 className="text-3xl font-bold mt-1 truncate" title={theme}>Research for: "{theme}"</h2>
         <p className="text-gray-400 mt-2">Here's a summary of information found on the web. Review and proceed to script generation.</p>
       </div>
       

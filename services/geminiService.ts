@@ -1,5 +1,5 @@
-import { GoogleGenAI, Type, Modality } from "@google/genai";
-import { ScriptSegment, MusicSuggestion, MusicTrack, VideoMetadata, VideoConfig } from '../types';
+import { GoogleGenAI, Type, Modality, FunctionDeclaration } from "@google/genai";
+import { ScriptSegment, MusicSuggestion, MusicTrack, VideoMetadata, VideoConfig, ChatMessage, ToolCall } from '../types';
 
 if (!process.env.API_KEY) {
     throw new Error("API_KEY environment variable not set");
@@ -8,12 +8,12 @@ if (!process.env.API_KEY) {
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const musicLibrary: MusicTrack[] = [
-    { id: 'inspiring-cinematic-lexin', title: 'Inspiring Cinematic Ambient', artist: 'Lexin Music', url: 'https://cdn.pixabay.com/download/audio/2022/08/04/audio_29b28a8692.mp3', genre: 'Cinematic', moods: ['inspiring', 'hopeful', 'ambient', 'calm', 'motivational'], duration: 137 },
-    { id: 'upbeat-corporate-usfx', title: 'Upbeat Corporate', artist: 'Universal Sound FX', url: 'https://cdn.pixabay.com/download/audio/2023/07/14/audio_651a374946.mp3', genre: 'Corporate', moods: ['upbeat', 'motivational', 'energetic', 'positive', 'happy'], duration: 122 },
-    { id: 'dramatic-epic-zakhar', title: 'The Epic', artist: 'Zakhar Valaha', url: 'https://cdn.pixabay.com/download/audio/2023/02/16/audio_191983419b.mp3', genre: 'Orchestral', moods: ['dramatic', 'epic', 'action', 'intense', 'trailer'], duration: 132 },
-    { id: 'lofi-chill-bodleasons', title: 'Lofi Chill', artist: 'BoDleasons', url: 'https://cdn.pixabay.com/download/audio/2022/05/23/audio_b723ace3d9.mp3', genre: 'Lo-fi', moods: ['chill', 'relaxed', 'calm', 'studying', 'background'], duration: 120 },
-    { id: 'ambient-documentary-audiovip', title: 'Ambient Documentary', artist: 'Audio-VIP', url: 'https://cdn.pixabay.com/download/audio/2022/08/02/audio_7313a04297.mp3', genre: 'Ambient', moods: ['thoughtful', 'documentary', 'serious', 'calm', 'introspective'], duration: 178 },
-    { id: 'energetic-rock-lite', title: 'Powerful Rock', artist: 'Lite-Saturation', url: 'https://cdn.pixabay.com/download/audio/2021/08/11/audio_42c525f05b.mp3', genre: 'Rock', moods: ['energetic', 'powerful', 'driving', 'action', 'upbeat'], duration: 136 },
+    { id: 'inspiring-cinematic-lexin', title: 'Inspiring Cinematic Ambient', artist: 'Lexin Music', url: 'https://cdn.pixabay.com/download/audio/2022/08/04/audio_2dde64f43c.mp3', genre: 'Cinematic', moods: ['inspiring', 'hopeful', 'ambient', 'calm', 'motivational'], duration: 172 },
+    { id: 'upbeat-corporate-usfx', title: 'Upbeat Corporate', artist: 'MorningLightMusic', url: 'https://cdn.pixabay.com/download/audio/2022/01/24/audio_511c1395f1.mp3', genre: 'Corporate', moods: ['upbeat', 'motivational', 'energetic', 'positive', 'happy'], duration: 140 },
+    { id: 'dramatic-epic-zakhar', title: 'The Epic', artist: 'Zakhar Valaha', url: 'https://cdn.pixabay.com/download/audio/2022/10/21/audio_56d6232731.mp3', genre: 'Orchestral', moods: ['dramatic', 'epic', 'action', 'intense', 'trailer'], duration: 194 },
+    { id: 'lofi-chill-bodleasons', title: 'Lofi Chill', artist: 'FASSounds', url: 'https://cdn.pixabay.com/download/audio/2022/02/07/audio_c8bce4f9c6.mp3', genre: 'Lo-fi', moods: ['chill', 'relaxed', 'calm', 'studying', 'background'], duration: 140 },
+    { id: 'ambient-documentary-audiovip', title: 'Ambient Documentary', artist: 'AShamaluevMusic', url: 'https://cdn.pixabay.com/download/audio/2022/08/02/audio_34b07c223a.mp3', genre: 'Ambient', moods: ['thoughtful', 'documentary', 'serious', 'calm', 'introspective'], duration: 212 },
+    { id: 'energetic-rock-lite', title: 'Powerful Rock', artist: 'LiteSaturation', url: 'https://cdn.pixabay.com/download/audio/2022/11/17/audio_82b4a5d33a.mp3', genre: 'Rock', moods: ['energetic', 'powerful', 'driving', 'action', 'upbeat'], duration: 138 },
 ];
 
 const scriptSchema = {
@@ -22,7 +22,7 @@ const scriptSchema = {
       type: Type.OBJECT,
       properties: {
         timestamp: { type: Type.STRING, description: 'Timestamp for the segment, e.g., "00:00 - 00:05".' },
-        visuals: { type: Type.STRING, description: 'Detailed description of the visuals (suggesting images, GIFs, or short video clips).' },
+        visuals: { type: Type.STRING, description: 'Detailed description of the visuals for a static image.' },
         narration: { type: Type.STRING, description: 'The narration/voiceover text for this segment. Must be a single, concise line.' },
         transition: { type: Type.STRING, description: 'The transition to the next scene, e.g., "Cut to", "Fade out", "Wipe left".' }
       },
@@ -145,13 +145,12 @@ export async function conductResearch(theme: string): Promise<ResearchResult> {
         const summary = response.text;
         const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
         
-        // FIX: Cast groundingChunks to any[] to ensure correct type inference for the reduce method.
-        const sources = (groundingChunks as any[]).reduce((acc, chunk) => {
+        const sources = (groundingChunks as any[]).reduce<{ uri: string; title: string; }[]>((acc, chunk) => {
             if (chunk.web && chunk.web.uri && chunk.web.title) {
                 acc.push({ uri: chunk.web.uri, title: chunk.web.title });
             }
             return acc;
-        }, [] as { uri: string; title: string; }[]);
+        }, []);
 
         const uniqueSources = Array.from(new Map(sources.map(s => [s.uri, s])).values());
 
@@ -170,6 +169,8 @@ export async function conductResearch(theme: string): Promise<ResearchResult> {
 }
 
 export async function generateScript(theme: string, duration: number, researchSummary: string): Promise<Omit<ScriptSegment, 'id'>[]> {
+    const instruction = "All visuals should be for static images.";
+
     const prompt = `You are a professional video scriptwriter. Based on the following research summary, create a detailed script for a short video (about ${duration} seconds long) on the theme: "${theme}".
     
     RESEARCH SUMMARY:
@@ -180,7 +181,7 @@ export async function generateScript(theme: string, duration: number, researchSu
     The video should be engaging and flow logically. Break it down into a number of scenes appropriate for the duration (e.g., a 60-second video might have 8-12 scenes).
     For each scene, provide:
     1.  'timestamp': A short duration, like "00:00 - 00:04".
-    2.  'visuals': A very detailed, vivid description suitable for an AI image generator to create a compelling visual. This should be based on the facts from the summary.
+    2.  'visuals': A very detailed, vivid description suitable for an AI image generator. ${instruction}
     3.  'narration': A concise, single-line narration text for the voiceover. Keep it brief and impactful, drawing from the summary.
     4.  'transition': A professional transition to the next scene (e.g., "Fade to black", "Quick cut to", "Slow dissolve into").
     
@@ -404,4 +405,97 @@ export async function generateVoiceover(text: string, voiceName: string = 'Puck'
 
     console.error("Failed to generate voiceover after multiple retries. Last error:", lastError);
     throw new Error(`Failed to generate voiceover after ${MAX_RETRIES} attempts. Last error: ${lastError?.message || 'Unknown error'}`);
+}
+
+const tools: FunctionDeclaration[] = [
+    {
+        name: 'change_visual',
+        description: 'Change the visual description for a specific scene, which will trigger a new image generation.',
+        parameters: {
+            type: Type.OBJECT,
+            properties: {
+                scene_number: { type: Type.INTEGER, description: 'The 1-based index of the scene to change.' },
+                new_visual_description: { type: Type.STRING, description: 'A new, detailed description for the visual of the specified scene.' },
+            },
+            required: ['scene_number', 'new_visual_description'],
+        },
+    },
+    {
+        name: 'change_narration',
+        description: 'Change the narration text for a specific scene, which will trigger a new voiceover synthesis.',
+        parameters: {
+            type: Type.OBJECT,
+            properties: {
+                scene_number: { type: Type.INTEGER, description: 'The 1-based index of the scene to change.' },
+                new_narration_text: { type: Type.STRING, description: 'The new narration text for the specified scene.' },
+            },
+            required: ['scene_number', 'new_narration_text'],
+        },
+    },
+    {
+        name: 'add_scene',
+        description: 'Add a new scene to the end of the video.',
+        parameters: {
+            type: Type.OBJECT,
+            properties: {
+                visual_description: { type: Type.STRING, description: 'A detailed description for the visual of the new scene.' },
+                narration_text: { type: Type.STRING, description: 'The narration text for the new scene.' },
+            },
+            required: ['visual_description', 'narration_text'],
+        },
+    },
+    {
+        name: 'replace_visual_with_user_image',
+        description: 'Replace the visual for a specific scene with an image uploaded by the user. Only use this if the user has indicated they have uploaded an image and want to use it.',
+        parameters: {
+            type: Type.OBJECT,
+            properties: {
+                scene_number: { type: Type.INTEGER, description: 'The 1-based index of the scene to change.' },
+            },
+            required: ['scene_number'],
+        },
+    },
+    {
+        name: 'change_background_music',
+        description: 'Change the background music to a track the user has uploaded. Only use this if the user has indicated they have uploaded an audio file and want to use it for the background music.',
+        parameters: {
+            type: Type.OBJECT,
+            properties: {},
+            required: [],
+        },
+    }
+];
+
+export async function processChatRequest(
+    history: ChatMessage[],
+    currentScript: ScriptSegment[]
+): Promise<{ text: string, toolCalls: ToolCall[] }> {
+    const systemInstruction = `You are a helpful AI video editing assistant. Your goal is to help the user modify a video script by calling the appropriate tools.
+The user can change visuals, narration, add new scenes, use an image they have uploaded, or change the background music to an audio file they have uploaded.
+The script is 1-indexed (Scene 1 is the first scene).
+Politely inform the user about the action you are taking. For example, if changing a visual, say "Okay, I'm updating the visual for scene {scene_number}."
+If the user wants to use their uploaded image, call the 'replace_visual_with_user_image' tool.
+If the user wants to use their uploaded audio for background music, call the 'change_background_music' tool.
+Here is the current script for context:
+${currentScript.map((s, i) => `Scene ${i+1}: "${s.narration}"`).join('\n')}
+`;
+    
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-pro',
+            contents: history,
+            config: {
+                systemInstruction,
+                tools: [{ functionDeclarations: tools }],
+            }
+        });
+
+        const text = response.text;
+        const toolCalls: ToolCall[] = response.functionCalls?.map(fc => ({ name: fc.name, args: fc.args })) || [];
+        
+        return { text, toolCalls };
+    } catch(error) {
+        console.error("Error processing chat request:", error);
+        return { text: "Sorry, I encountered an error. Please try again.", toolCalls: [] };
+    }
 }

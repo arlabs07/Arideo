@@ -1,14 +1,13 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { ScriptSegment, MediaAsset, VideoConfig, MusicSuggestion, MusicTrack, VideoMetadata } from '../types';
+import { ScriptSegment, MediaAsset, VideoConfig, MusicSuggestion, MusicTrack, ChatMessage } from '../types';
 import * as geminiService from '../services/geminiService';
 import { PlayIcon } from './icons/PlayIcon';
 import { PauseIcon } from './icons/PauseIcon';
 import { DownloadIcon } from './icons/DownloadIcon';
 import { FullscreenIcon } from './icons/FullscreenIcon';
-import { MusicNoteIcon } from './icons/MusicNoteIcon';
-import { ClipboardIcon } from './icons/ClipboardIcon';
-import { CheckIcon } from './icons/CheckIcon';
+import { decode, decodeAudioData } from '../utils/audioUtils';
 import Loader from './Loader';
+import Chatbot from './Chatbot';
 
 interface VideoPreviewProps {
   script: ScriptSegment[];
@@ -21,6 +20,11 @@ interface VideoPreviewProps {
   watermark: string | null;
   musicSuggestion: MusicSuggestion | null;
   selectedMusic: MusicTrack | null;
+  onFinalize: (videoUrl: string, finalScript: ScriptSegment[]) => void;
+  setScript: React.Dispatch<React.SetStateAction<ScriptSegment[] | null>>;
+  setMediaAssets: React.Dispatch<React.SetStateAction<MediaAsset[] | null>>;
+  setVoiceovers: React.Dispatch<React.SetStateAction<Map<string, AudioBuffer>>>;
+  setSelectedMusic: React.Dispatch<React.SetStateAction<MusicTrack | null>>;
 }
 
 const formatTime = (seconds: number) => {
@@ -39,20 +43,17 @@ const aspectRatios: Record<VideoConfig['aspectRatio'], string> = {
 
 const animationClasses = ['ken-burns-in', 'ken-burns-out', 'ken-burns-pan-right', 'ken-burns-pan-up', 'ken-burns-pan-left', 'ken-burns-pan-down'];
 
-const VideoPreview: React.FC<VideoPreviewProps> = ({ script, mediaAssets, voiceovers, audioContext, theme, config, watermark, musicSuggestion, selectedMusic }) => {
+const VideoPreview: React.FC<VideoPreviewProps> = ({ 
+    script, mediaAssets, voiceovers, audioContext, theme, config, watermark, selectedMusic, onFinalize,
+    setScript, setMediaAssets, setVoiceovers, setSelectedMusic
+}) => {
     const [isPlaying, setIsPlaying] = useState(false);
     const [currentSegmentIndex, setCurrentSegmentIndex] = useState(0);
     const [progress, setProgress] = useState(0);
     const [currentTime, setCurrentTime] = useState(0);
     const [isRendering, setIsRendering] = useState(false);
     const [renderingMessage, setRenderingMessage] = useState('');
-    const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
     const [musicBuffer, setMusicBuffer] = useState<AudioBuffer | null>(null);
-    const [musicLoadingState, setMusicLoadingState] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle');
-
-    const [videoMetadata, setVideoMetadata] = useState<VideoMetadata | null>(null);
-    const [isMetadataLoading, setIsMetadataLoading] = useState(false);
-    const [copiedStates, setCopiedStates] = useState<Record<string, boolean>>({});
 
     const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
     const musicSourceRef = useRef<AudioBufferSourceNode | null>(null);
@@ -70,22 +71,22 @@ const VideoPreview: React.FC<VideoPreviewProps> = ({ script, mediaAssets, voiceo
     }, [mediaAssets]);
 
     useEffect(() => {
-        if (selectedMusic) {
+        if (selectedMusic && selectedMusic.url) {
             const fetchMusic = async () => {
-                setMusicLoadingState('loading');
                 try {
                     const response = await fetch(selectedMusic.url);
                     if (!response.ok) throw new Error(`Failed to fetch music: ${response.status} ${response.statusText}`);
                     const arrayBuffer = await response.arrayBuffer();
                     const decodedBuffer = await audioContext.decodeAudioData(arrayBuffer);
                     setMusicBuffer(decodedBuffer);
-                    setMusicLoadingState('loaded');
                 } catch (e) { 
                     console.error("Failed to load background music", e); 
-                    setMusicLoadingState('error');
+                    setMusicBuffer(null);
                 }
             };
             fetchMusic();
+        } else {
+            setMusicBuffer(null);
         }
     }, [selectedMusic, audioContext]);
 
@@ -193,10 +194,10 @@ const VideoPreview: React.FC<VideoPreviewProps> = ({ script, mediaAssets, voiceo
         }
     };
 
-    const handleDownload = useCallback(async () => {
+    const handleFinalizeAndRender = useCallback(async () => {
         if (isRendering) return;
         setIsRendering(true);
-        setDownloadUrl(null);
+        
         const drawCaption = (ctx: CanvasRenderingContext2D, text: string, canvasWidth: number, canvasHeight: number) => {
             const maxTextWidth = canvasWidth * 0.9;
             const words = text.split(' ');
@@ -223,6 +224,38 @@ const VideoPreview: React.FC<VideoPreviewProps> = ({ script, mediaAssets, voiceo
             lines.forEach((currentLine, index) => ctx.fillText(currentLine, canvasWidth / 2, y + index * lineHeight));
             ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
         };
+
+        const getWatermarkPositionAndOpacity = (elapsed: number, canvasWidth: number, canvasHeight: number, watermarkImage: HTMLImageElement) => {
+            const period = 20; // seconds for one full loop
+            const timeInPeriod = elapsed % period;
+            const phaseDuration = period / 4;
+            const phase = Math.floor(timeInPeriod / phaseDuration);
+            const timeInPhase = timeInPeriod % phaseDuration;
+    
+            const margin = canvasWidth * 0.02;
+            const watermarkHeight = canvasHeight * 0.05;
+            const watermarkWidth = watermarkImage.width * (watermarkHeight / watermarkImage.height);
+            
+            const positions = [
+                { x: canvasWidth - watermarkWidth - margin, y: margin }, // TR
+                { x: margin, y: canvasHeight - watermarkHeight - margin }, // BL
+                { x: margin, y: margin }, // TL
+                { x: canvasWidth - watermarkWidth - margin, y: canvasHeight - watermarkHeight - margin }  // BR
+            ];
+            
+            const currentPos = positions[phase];
+            let opacity = 0.8;
+            const fadeDuration = 0.25;
+    
+            if (timeInPhase > phaseDuration - fadeDuration) { // fading out
+                opacity = 0.8 * (1 - (timeInPhase - (phaseDuration - fadeDuration)) / fadeDuration);
+            } else if (timeInPhase < fadeDuration) { // fading in
+                opacity = 0.8 * (timeInPhase / fadeDuration);
+            }
+            
+            return { ...currentPos, opacity: Math.max(0, opacity) };
+        };
+
         const drawKenBurnsFrame = (ctx: CanvasRenderingContext2D, image: HTMLImageElement, progress: number, animation: string, canvasWidth: number, canvasHeight: number) => {
             ctx.save();
             const scale = animation.includes('in') ? 1 + progress * 0.1 : (animation.includes('out') ? 1.15 - progress * 0.15 : 1.2);
@@ -286,9 +319,11 @@ const VideoPreview: React.FC<VideoPreviewProps> = ({ script, mediaAssets, voiceo
         recorder.ondataavailable = (e) => chunks.push(e.data);
         recorder.onstop = () => {
             const blob = new Blob(chunks, { type: 'video/webm' });
-            setDownloadUrl(URL.createObjectURL(blob));
-            setIsRendering(false); setRenderingMessage('');
+            const videoUrl = URL.createObjectURL(blob);
+            setIsRendering(false); 
+            setRenderingMessage('');
             try { audioSourceNode.stop(); audioSourceNode.disconnect(); } catch (e) {}
+            onFinalize(videoUrl, script);
         };
         recorder.start(); audioSourceNode.start(0);
         const TRANSITION_DURATION = 0.5, startTime = performance.now();
@@ -325,163 +360,91 @@ const VideoPreview: React.FC<VideoPreviewProps> = ({ script, mediaAssets, voiceo
             ctx.globalAlpha = 1.0;
             drawCaption(ctx, script[currentSceneIndex].narration, w, h);
             if (watermarkImage) {
-                const margin = w * 0.02; const watermarkHeight = h * 0.05;
+                const { x, y, opacity } = getWatermarkPositionAndOpacity(elapsed, w, h, watermarkImage);
+                const watermarkHeight = h * 0.05;
                 const watermarkWidth = watermarkImage.width * (watermarkHeight / watermarkImage.height);
-                ctx.globalAlpha = 0.8;
-                ctx.drawImage(watermarkImage, w - watermarkWidth - margin, margin, watermarkWidth, watermarkHeight);
+                ctx.globalAlpha = opacity;
+                ctx.drawImage(watermarkImage, x, y, watermarkWidth, watermarkHeight);
                 ctx.globalAlpha = 1.0;
             }
             renderFrameId.current = requestAnimationFrame(renderLoop);
         };
         renderFrameId.current = requestAnimationFrame(renderLoop);
-    }, [script, mediaAssets, voiceovers, audioContext, totalDuration, segmentDurations, config, isRendering, watermark, sceneAnimations, selectedMusic, musicBuffer]);
+    }, [script, mediaAssets, voiceovers, audioContext, totalDuration, segmentDurations, config, isRendering, watermark, sceneAnimations, selectedMusic, musicBuffer, onFinalize]);
 
-    const handleGenerateMetadata = useCallback(async () => {
-        if (isMetadataLoading || !script || !theme) return;
-        setIsMetadataLoading(true);
-        setVideoMetadata(null);
-        try {
-            const fullScriptText = script.map(s => s.narration).join('\n');
-            const metadata = await geminiService.generateVideoMetadata(theme, fullScriptText);
-            setVideoMetadata(metadata);
-        } catch (e) {
-            console.error("Failed to generate metadata", e);
-        } finally {
-            setIsMetadataLoading(false);
-        }
-    }, [script, theme, isMetadataLoading]);
-
-    const handleCopyToClipboard = (text: string, id: string) => {
-      navigator.clipboard.writeText(text);
-      setCopiedStates(prev => ({ ...prev, [id]: true }));
-      setTimeout(() => {
-        setCopiedStates(prev => ({ ...prev, [id]: false }));
-      }, 2000);
-    };
-    
     if (isRendering) return <Loader message={renderingMessage} />;
 
     const currentSegment = script[currentSegmentIndex];
     if (!currentSegment) return null;
 
+    const currentMediaAsset = mediaAssets.find(m => m.segmentId === currentSegment.id);
+
     return (
-        <div className="w-full max-w-5xl animate-fade-in-up">
-             <canvas ref={canvasRef} className="hidden"></canvas>
-             <div className="text-center mb-6">
-                <h2 className="text-3xl md:text-4xl font-bold mt-1">Video for: "{theme}"</h2>
-                <p className="text-gray-400 mt-2">Your AI-generated video is ready. Press play to watch or download.</p>
+        <div className="w-full max-w-7xl mx-auto animate-fade-in-up">
+            <canvas ref={canvasRef} className="hidden"></canvas>
+            <div className="text-center mb-6">
+                <h2 className="text-3xl md:text-4xl font-bold mt-1 truncate" title={theme}>Customize Video: "{theme}"</h2>
+                <p className="text-gray-400 mt-2">Use the chatbot to edit your video, then press play to preview.</p>
             </div>
-            <div className="w-full" ref={fullscreenContainerRef}>
-                <div className={`relative w-full mx-auto max-w-full ${aspectRatios[config.aspectRatio]} bg-black rounded-lg overflow-hidden shadow-2xl border-2 border-gray-800`}>
-                    {mediaAssets.map((media, index) => (
-                        <img key={media.segmentId} src={media.url} alt={media.description} className="absolute inset-0 w-full h-full object-cover transition-opacity duration-1000 ease-in-out animate-ken-burns"
-                            style={{
-                                animationName: isPlaying && currentSegmentIndex === index ? sceneAnimations[index] : 'none',
-                                animationDuration: `${segmentDurations[index]}s`,
-                                opacity: currentSegmentIndex === index ? 1 : 0,
-                            }}
-                        />
-                    ))}
-                    {watermark && (<img src={watermark} alt="Watermark" className="absolute top-4 right-4 h-[5%] w-auto opacity-80 pointer-events-none z-10" />)}
-                    <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/80 to-transparent pointer-events-none z-10"></div>
-                    <div className="absolute inset-x-0 bottom-[15%] md:bottom-[20%] p-4 z-20" key={currentSegment.id}>
-                        <p className="text-center text-white text-xl md:text-3xl font-black animate-fade-in drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
-                            {currentSegment.narration}
-                        </p>
+            <div className="bg-gray-900/30 border border-gray-800 rounded-2xl shadow-2xl p-4 lg:p-6 flex flex-col lg:flex-row gap-6">
+                <div className="flex-grow lg:w-[calc(66.66%-0.75rem)]">
+                    <div className="w-full" ref={fullscreenContainerRef}>
+                        <div className={`relative w-full mx-auto max-w-full ${aspectRatios[config.aspectRatio]} bg-black rounded-lg overflow-hidden shadow-2xl border-2 border-gray-800`}>
+                            {mediaAssets.map((media, index) => {
+                                const isActive = currentSegmentIndex === index;
+                                return (
+                                    <img key={media.segmentId} src={media.url} alt={media.description} className="absolute inset-0 w-full h-full object-cover transition-opacity duration-1000 ease-in-out"
+                                        style={{
+                                            animation: isPlaying && isActive ? `${sceneAnimations[index]} ${segmentDurations[index]}s ease-in-out forwards` : 'none',
+                                            opacity: isActive ? 1 : 0,
+                                        }}
+                                    />
+                                );
+                            })}
+
+                            {watermark && (<img src={watermark} alt="Watermark" className="absolute h-[5%] w-auto pointer-events-none z-10" style={{ animation: `moveWatermark 20s linear infinite` }} />)}
+                            <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/80 to-transparent pointer-events-none z-10"></div>
+                            <div className="absolute inset-x-0 bottom-[15%] md:bottom-[20%] p-4 z-20" key={currentSegment.id}>
+                                <p className="text-center text-white text-xl md:text-3xl font-black animate-fade-in drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
+                                    {currentSegment.narration}
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="mt-4 w-full p-3 bg-gray-800/60 rounded-lg flex items-center gap-2 sm:gap-4 flex-wrap">
+                            <button onClick={handleTogglePlay} className="p-2 bg-indigo-600 rounded-full text-white hover:bg-indigo-500 transition-colors disabled:bg-gray-600" disabled={isRendering}>
+                                {isPlaying ? <PauseIcon className="w-6 h-6" /> : <PlayIcon className="w-6 h-6" />}
+                            </button>
+                            <span className="font-mono text-xs sm:text-sm text-gray-300">{formatTime(currentTime)}</span>
+                            <div className="flex-grow h-2 bg-gray-600 rounded-full cursor-pointer group">
+                            <div className="h-full bg-indigo-500 rounded-full group-hover:bg-indigo-400 transition-colors" style={{ width: `${progress}%` }}></div>
+                            </div>
+                            <span className="font-mono text-xs sm:text-sm text-gray-300">{formatTime(totalDuration)}</span>
+                            <div className="w-full sm:w-auto flex justify-end gap-2 sm:gap-4 mt-2 sm:mt-0">
+                                <button onClick={handleFullscreen} className="p-2 text-gray-300 hover:text-white transition-colors" title="Toggle Fullscreen"> <FullscreenIcon className="w-6 h-6" /> </button>
+                                <button 
+                                    onClick={handleFinalizeAndRender} 
+                                    className="p-2 bg-purple-600 rounded-full text-white hover:bg-purple-500 transition-colors disabled:bg-gray-600 disabled:cursor-not-allowed disabled:opacity-50" 
+                                    disabled={isRendering} 
+                                    title="Finalize & Render Video"
+                                >
+                                    <DownloadIcon className="w-6 h-6" />
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
-                <div className="mt-4 w-full p-3 bg-gray-800/60 rounded-lg flex items-center gap-2 sm:gap-4 flex-wrap">
-                    <button onClick={handleTogglePlay} className="p-2 bg-indigo-600 rounded-full text-white hover:bg-indigo-500 transition-colors disabled:bg-gray-600" disabled={isRendering}>
-                        {isPlaying ? <PauseIcon className="w-6 h-6" /> : <PlayIcon className="w-6 h-6" />}
-                    </button>
-                    <span className="font-mono text-xs sm:text-sm text-gray-300">{formatTime(currentTime)}</span>
-                    <div className="flex-grow h-2 bg-gray-600 rounded-full cursor-pointer group">
-                       <div className="h-full bg-indigo-500 rounded-full group-hover:bg-indigo-400 transition-colors" style={{ width: `${progress}%` }}></div>
-                    </div>
-                    <span className="font-mono text-xs sm:text-sm text-gray-300">{formatTime(totalDuration)}</span>
-                    <div className="w-full sm:w-auto flex justify-end gap-2 sm:gap-4 mt-2 sm:mt-0">
-                        <button onClick={handleFullscreen} className="p-2 text-gray-300 hover:text-white transition-colors" title="Toggle Fullscreen"> <FullscreenIcon className="w-6 h-6" /> </button>
-                        {downloadUrl ? (
-                             <a href={downloadUrl} download={`${theme.replace(/\s+/g, '_')}.webm`} className="p-2 bg-green-600 rounded-full text-white hover:bg-green-500 transition-colors" title="Download Ready"> <DownloadIcon className="w-6 h-6"/> </a>
-                        ) : (
-                            <button onClick={handleDownload} className="p-2 bg-purple-600 rounded-full text-white hover:bg-purple-500 transition-colors disabled:bg-gray-600 disabled:animate-pulse" disabled={isRendering} title="Download Video"> <DownloadIcon className="w-6 h-6" /> </button>
-                        )}
-                    </div>
+                <div className="flex-shrink-0 lg:w-[calc(33.33%-0.75rem)]">
+                     <Chatbot
+                        script={script}
+                        setScript={setScript}
+                        setMediaAssets={setMediaAssets}
+                        setVoiceovers={setVoiceovers}
+                        audioContext={audioContext}
+                        setSelectedMusic={setSelectedMusic}
+                    />
                 </div>
-                 {selectedMusic && (
-                    <div className="mt-3 text-center text-sm text-gray-400 flex items-center justify-center gap-2 animate-fade-in">
-                        <MusicNoteIcon className="w-4 h-4 text-purple-400" />
-                        <span>Music: <span className="font-semibold text-gray-300">"{selectedMusic.title}" by {selectedMusic.artist}</span></span>
-                        {musicLoadingState === 'loading' && <span className="text-xs italic">(Loading...)</span>}
-                        {musicLoadingState === 'error' && <span className="text-xs italic text-red-400">(Failed to load)</span>}
-                    </div>
-                 )}
-            </div>
-
-            <div className="mt-16 w-full">
-                <div className="text-center mb-8">
-                    <h3 className="text-2xl md:text-3xl font-bold">Amplify Your Reach</h3>
-                    <p className="text-gray-400 mt-2">Generate optimized content for your video to boost its discoverability.</p>
-                </div>
-                {!videoMetadata && !isMetadataLoading && (
-                    <div className="text-center">
-                        <button onClick={handleGenerateMetadata} disabled={isMetadataLoading} className="bg-purple-600 text-white font-semibold rounded-lg px-8 py-4 text-lg hover:bg-purple-700 transition-all duration-300 transform hover:scale-105 disabled:bg-gray-700 disabled:cursor-not-allowed">
-                            {isMetadataLoading ? 'Generating...' : '✨ Generate Video Details'}
-                        </button>
-                    </div>
-                )}
-                {isMetadataLoading && <Loader message="Crafting titles, descriptions, and more..." />}
-                {videoMetadata && (
-                    <div className="space-y-6 animate-fade-in-up">
-                        {/* Title */}
-                        <div>
-                            <label className="text-lg font-semibold block mb-2">Title</label>
-                            <div className="relative">
-                                <p className="w-full bg-gray-800 rounded-md p-3 pr-12">{videoMetadata.title}</p>
-                                <button onClick={() => handleCopyToClipboard(videoMetadata.title, 'title')} className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-400 hover:text-white transition-colors rounded-md">
-                                    {copiedStates['title'] ? <CheckIcon className="w-5 h-5 text-green-500"/> : <ClipboardIcon className="w-5 h-5"/>}
-                                </button>
-                            </div>
-                        </div>
-                        {/* Description */}
-                        <div>
-                            <label className="text-lg font-semibold block mb-2">Description</label>
-                            <div className="relative">
-                                <p className="w-full bg-gray-800 rounded-md p-3 pr-12 h-40 overflow-y-auto whitespace-pre-wrap">{videoMetadata.description}</p>
-                                <button onClick={() => handleCopyToClipboard(videoMetadata.description, 'desc')} className="absolute right-2 top-3 p-2 text-gray-400 hover:text-white transition-colors rounded-md">
-                                     {copiedStates['desc'] ? <CheckIcon className="w-5 h-5 text-green-500"/> : <ClipboardIcon className="w-5 h-5"/>}
-                                </button>
-                            </div>
-                        </div>
-                        {/* Chapters */}
-                        <div>
-                            <label className="text-lg font-semibold block mb-2">Chapters</label>
-                            <div className="relative">
-                                <div className="w-full bg-gray-800 rounded-md p-3 pr-12 h-40 overflow-y-auto">
-                                    {videoMetadata.chapters.map(c => `${c.timestamp} - ${c.title}`).join('\n')}
-                                </div>
-                                <button onClick={() => handleCopyToClipboard(videoMetadata.chapters.map(c => `${c.timestamp} - ${c.title}`).join('\n'), 'chapters')} className="absolute right-2 top-3 p-2 text-gray-400 hover:text-white transition-colors rounded-md">
-                                    {copiedStates['chapters'] ? <CheckIcon className="w-5 h-5 text-green-500"/> : <ClipboardIcon className="w-5 h-5"/>}
-                                </button>
-                            </div>
-                        </div>
-                        {/* Tags */}
-                        <div>
-                            <label className="text-lg font-semibold block mb-2">Tags</label>
-                             <div className="relative">
-                                <div className="w-full bg-gray-800 rounded-md p-3 pr-12">
-                                    <div className="flex flex-wrap gap-2">
-                                        {videoMetadata.tags.map(tag => <span key={tag} className="bg-indigo-600/50 text-indigo-200 text-sm font-medium px-3 py-1 rounded-full">{tag}</span>)}
-                                    </div>
-                                </div>
-                                <button onClick={() => handleCopyToClipboard(videoMetadata.tags.join(', '), 'tags')} className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-400 hover:text-white transition-colors rounded-md">
-                                     {copiedStates['tags'] ? <CheckIcon className="w-5 h-5 text-green-500"/> : <ClipboardIcon className="w-5 h-5"/>}
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                )}
             </div>
         </div>
     );
