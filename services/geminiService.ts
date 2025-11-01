@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type, Modality, FunctionDeclaration } from "@google/genai";
-import { ScriptSegment, MusicSuggestion, MusicTrack, VideoMetadata, VideoConfig, ChatMessage, ToolCall } from '../types';
+import { ScriptSegment, MusicSuggestion, MusicTrack, VideoMetadata, VideoConfig, ChatMessage, ToolCall, ScriptSegmentV2 } from '../types';
 
 if (!process.env.API_KEY) {
     throw new Error("API_KEY environment variable not set");
@@ -14,6 +14,10 @@ const musicLibrary: MusicTrack[] = [
     { id: 'lofi-chill-bodleasons', title: 'Lofi Chill', artist: 'FASSounds', url: 'https://cdn.pixabay.com/download/audio/2022/02/07/audio_c8bce4f9c6.mp3', genre: 'Lo-fi', moods: ['chill', 'relaxed', 'calm', 'studying', 'background'], duration: 140 },
     { id: 'ambient-documentary-audiovip', title: 'Ambient Documentary', artist: 'AShamaluevMusic', url: 'https://cdn.pixabay.com/download/audio/2022/08/02/audio_34b07c223a.mp3', genre: 'Ambient', moods: ['thoughtful', 'documentary', 'serious', 'calm', 'introspective'], duration: 212 },
     { id: 'energetic-rock-lite', title: 'Powerful Rock', artist: 'LiteSaturation', url: 'https://cdn.pixabay.com/download/audio/2022/11/17/audio_82b4a5d33a.mp3', genre: 'Rock', moods: ['energetic', 'powerful', 'driving', 'action', 'upbeat'], duration: 138 },
+    { id: 'a-small-miracle', title: 'A Small Miracle', artist: 'Romarecord1973', url: 'https://cdn.pixabay.com/download/audio/2023/10/20/audio_51212882ae.mp3', genre: 'Cinematic', moods: ['emotional', 'hopeful', 'calm', 'inspiring'], duration: 184 },
+    { id: 'modern-corporate-inspiring', title: 'Modern Corporate Inspiring', artist: 'AudioCoffee', url: 'https://cdn.pixabay.com/download/audio/2024/05/29/audio_403b22a013.mp3', genre: 'Corporate', moods: ['upbeat', 'motivational', 'positive', 'tech'], duration: 128 },
+    { id: 'tech-ambient', title: 'Tech Ambient', artist: 'AlexAction', url: 'https://cdn.pixabay.com/download/audio/2024/02/16/audio_108518e932.mp3', genre: 'Ambient', moods: ['tech', 'background', 'calm', 'minimal'], duration: 180 },
+    { id: 'just-relax', title: 'Just Relax', artist: 'Lesfm', url: 'https://cdn.pixabay.com/download/audio/2022/11/17/audio_82c31329a6.mp3', genre: 'Lo-fi', moods: ['relax', 'chill', 'calm', 'background', 'studying'], duration: 153 },
 ];
 
 const scriptSchema = {
@@ -209,6 +213,120 @@ export async function generateScript(theme: string, duration: number, researchSu
         throw new Error("Failed to communicate with the AI model for script generation.");
     }
 }
+
+const elementAnimationSchema = {
+    type: Type.OBJECT,
+    properties: {
+        type: { type: Type.STRING, enum: ['fade-in', 'slide-in-left', 'slide-in-right', 'slide-in-top', 'slide-in-bottom', 'zoom-in'] },
+        start: { type: Type.NUMBER, description: 'Animation start time in seconds, relative to the scene start.' },
+        duration: { type: Type.NUMBER, description: 'Animation duration in seconds.' }
+    },
+    required: ['type', 'start', 'duration']
+};
+
+const sceneElementSchema = {
+    type: Type.OBJECT,
+    properties: {
+        id: { type: Type.STRING, description: 'A unique identifier for this element, e.g., "background-1" or "text-title-1".' },
+        type: { type: Type.STRING, enum: ['image', 'text'] },
+        prompt: { type: Type.STRING, description: 'A detailed prompt for the image generator. Required if type is "image".' },
+        text: { type: Type.STRING, description: 'The text content. Required if type is "text".' },
+        style: {
+            type: Type.OBJECT,
+            properties: {
+                fontFamily: { type: Type.STRING, description: 'Font family, e.g., "Inter". Default to "Inter".' },
+                fontSize: { type: Type.NUMBER, description: 'Font size as a percentage of canvas height (e.g., 5 for 5%).' },
+                color: { type: Type.STRING, description: 'Hex color code for the text, e.g., "#FFFFFF".' },
+                textAlign: { type: Type.STRING, enum: ['left', 'center', 'right'] },
+                verticalAlign: { type: Type.STRING, enum: ['top', 'middle', 'bottom'] },
+                fontWeight: { type: Type.STRING, description: 'Font weight, e.g., "400", "700", "900".' }
+            }
+        },
+        layout: {
+            type: Type.OBJECT,
+            properties: {
+                x: { type: Type.NUMBER, description: 'Left position as a percentage (0-100).' },
+                y: { type: Type.NUMBER, description: 'Top position as a percentage (0-100).' },
+                width: { type: Type.NUMBER, description: 'Width as a percentage (0-100).' },
+                height: { type: Type.NUMBER, description: 'Height as a percentage (0-100).' }
+            },
+            required: ['x', 'y', 'width', 'height']
+        },
+        animation: elementAnimationSchema
+    },
+    required: ['id', 'type', 'style', 'layout', 'animation']
+};
+
+const scriptV2Schema = {
+    type: Type.ARRAY,
+    items: {
+        type: Type.OBJECT,
+        properties: {
+            id: { type: Type.STRING, description: 'A unique identifier for this scene segment, e.g., "scene-1".' },
+            narration: { type: Type.STRING, description: 'The narration/voiceover text for this segment. Must be a single, concise line.' },
+            elements: {
+                type: Type.ARRAY,
+                items: sceneElementSchema,
+                description: "A list of animated elements for this scene. The first element must be an 'image' that serves as the background."
+            }
+        },
+        required: ['id', 'narration', 'elements']
+    }
+};
+
+export async function generateScriptV2(theme: string, duration: number, researchSummary: string): Promise<ScriptSegmentV2[]> {
+    const prompt = `You are a creative motion graphics designer. Based on the research summary, create a script for a dynamic, animated video (~${duration}s) about "${theme}".
+
+    RESEARCH SUMMARY:
+    ---
+    ${researchSummary}
+    ---
+
+    KEY INSTRUCTIONS:
+    1.  **Cohesive Flow:** Maintain a consistent visual theme, color palette, and style across all scenes. The video should feel like a single, unified piece.
+    2.  **Engaging Backgrounds:** Each scene's first element MUST be an 'image' type element to serve as the background. Provide a detailed 'prompt' for this background image that is visually interesting, abstract or subtly thematic, and complements the main content without being distracting. Its layout should cover the entire canvas (x:0, y:0, width:100, height:100). DO NOT use solid color backgrounds.
+    3.  **Balanced Composition:** Design visually appealing compositions.
+        - Main content (images, key text) should be prominent.
+        - To avoid large empty areas and create a richer visual, add secondary 'text' elements with short descriptions, labels, or related facts. These should use a smaller font size than primary text.
+        - Ensure element animations are timed well with a natural narration pace. Avoid awkward overlaps.
+    
+    For each scene, provide:
+    1. 'id': A unique ID for the scene.
+    2. 'narration': A concise, single-line voiceover text.
+    3. 'elements': An array of animated elements on the canvas.
+        - The first element MUST be of type 'image' and act as the scene background.
+        - Other elements can be 'image' or 'text' on top of the background.
+        - For each element, define:
+            - 'id', 'type', 'prompt' (for image), 'text' (for text).
+            - 'style': Visual styling (colors, fonts). Use hex codes. Font size is a percentage of canvas height.
+            - 'layout': Position (x, y) and size (width, height) as percentages (0-100).
+            - 'animation': Animation type, start time (relative to scene start), and duration.
+    
+    The output MUST be a JSON array matching the schema.`;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-pro',
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: scriptV2Schema,
+                temperature: 0.8,
+            },
+        });
+
+        const jsonStr = response.text.trim();
+        const parsedScript = JSON.parse(jsonStr);
+        if (!Array.isArray(parsedScript)) {
+            throw new Error("API did not return a valid array for the V2 script.");
+        }
+        return parsedScript;
+    } catch(error) {
+        console.error("Error generating V2 script:", error);
+        throw new Error("Failed to communicate with the AI model for V2 script generation.");
+    }
+}
+
 
 export async function generateVideoMetadata(theme: string, scriptText: string): Promise<VideoMetadata> {
     const prompt = `Based on the video's theme and full script narration, generate metadata suitable for a YouTube video.

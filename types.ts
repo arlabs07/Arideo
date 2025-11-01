@@ -7,6 +7,40 @@ export interface ScriptSegment {
   transition: string;
 }
 
+export interface ElementAnimation {
+  type: 'fade-in' | 'slide-in-left' | 'slide-in-right' | 'slide-in-top' | 'slide-in-bottom' | 'zoom-in';
+  start: number;
+  duration: number;
+}
+
+export interface SceneElement {
+  id: string;
+  type: 'image' | 'text';
+  prompt?: string;
+  text?: string;
+  style: {
+    fontFamily?: string;
+    fontSize?: number;
+    color?: string;
+    textAlign?: 'left' | 'center' | 'right';
+    verticalAlign?: 'top' | 'middle' | 'bottom';
+    fontWeight?: string;
+  };
+  layout: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  animation: ElementAnimation;
+}
+
+export interface ScriptSegmentV2 {
+  id: string;
+  narration: string;
+  elements: SceneElement[];
+}
+
 export interface MediaAsset {
   segmentId: string;
   type: 'image';

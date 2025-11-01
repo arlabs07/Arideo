@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useMemo } from 'react';
-import { ScriptSegment, MediaAsset, VideoConfig, MusicSuggestion, MusicTrack, VideoMetadata } from './types';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
+import { ScriptSegment, MediaAsset, VideoConfig, MusicSuggestion, MusicTrack, VideoMetadata, ScriptSegmentV2, SceneElement } from './types';
 import * as geminiService from './services/geminiService';
 import { decodeAudioData, decode } from './utils/audioUtils';
 import PromptInput from './components/PromptInput';
@@ -61,9 +61,11 @@ function App() {
   const [videoConfig, setVideoConfig] = useState<VideoConfig | null>(null);
   const [researchData, setResearchData] = useState<geminiService.ResearchResult | null>(null);
   const [script, setScript] = useState<ScriptSegment[] | null>(null);
+  const [scriptV2, setScriptV2] = useState<ScriptSegmentV2[] | null>(null);
   const [musicSuggestion, setMusicSuggestion] = useState<MusicSuggestion | null>(null);
   const [selectedMusic, setSelectedMusic] = useState<MusicTrack | null>(null);
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[] | null>(null);
+  const [mediaAssetsV2, setMediaAssetsV2] = useState<Map<string, string>>(new Map());
   const [voiceovers, setVoiceovers] = useState<Map<string, AudioBuffer>>(new Map());
   const [watermark, setWatermark] = useState<string | null>(null);
   const [initialImageAsset, setInitialImageAsset] = useState<string | null>(null);
@@ -77,8 +79,34 @@ function App() {
 
   const [finalVideoUrl, setFinalVideoUrl] = useState<string | null>(null);
   const [finalScript, setFinalScript] = useState<ScriptSegment[] | null>(null);
+  const [finalScriptV2, setFinalScriptV2] = useState<ScriptSegmentV2[] | null>(null);
+  
+  const [generationVersion, setGenerationVersion] = useState<'v1' | 'v2'>('v1');
 
   const audioContext = useMemo(() => new (window.AudioContext || (window as any).webkitAudioContext)(), []);
+
+  const handleReset = () => {
+    setTheme('');
+    setVideoConfig(null);
+    setResearchData(null);
+    setScript(null);
+    setScriptV2(null);
+    setMusicSuggestion(null);
+    setSelectedMusic(null);
+    setMediaAssets(null);
+    setMediaAssetsV2(new Map());
+    setVoiceovers(new Map());
+    setFinalVideoUrl(null);
+    setFinalScript(null);
+    setFinalScriptV2(null);
+    setCurrentStep('theme');
+    setError(null);
+    setIsLoading(false);
+    setWatermark(null);
+    setInitialImageAsset(null);
+    setAppView('prompt');
+    setGenerationVersion('v1');
+  };
 
   const handleResearch = useCallback(async (newTheme: string, config: VideoConfig) => {
     setTheme(newTheme);
@@ -95,15 +123,13 @@ function App() {
     } catch (e) {
         console.error('Research failed:', e);
         setError(`Failed to conduct research. ${e instanceof Error ? e.message : 'Please try again.'}`);
-        handleReset(); // Go back to prompt on failure
+        handleReset();
     } finally {
         setIsLoading(false);
     }
   }, []);
 
   const handleGenerateFromPrompt = async (prompt: string, newWatermark: string | null, userImage: string | null) => {
-    setWatermark(newWatermark);
-    setInitialImageAsset(userImage);
     setIsLoading(true);
     setError(null);
     setLoadingMessage("Understanding your video idea...");
@@ -112,9 +138,11 @@ function App() {
     
     try {
       const { theme: parsedTheme, ...parsedConfig } = await geminiService.parsePromptForConfig(prompt);
+      setWatermark(newWatermark);
+      setInitialImageAsset(userImage);
       await handleResearch(parsedTheme, parsedConfig);
     } catch (e) {
-        console.error('Prompt parsing or research failed:', e);
+        console.error('Prompt parsing or generation failed:', e);
         setError(e instanceof Error ? e.message : 'Could not understand your prompt. Please be more specific.');
         setAppView('prompt');
         setIsLoading(false);
@@ -126,8 +154,7 @@ function App() {
     handleGenerateFromPrompt(prompt, newWatermark, null);
   };
 
-
-  const handleScriptGeneration = useCallback(async () => {
+  const handleScriptGenerationV1 = useCallback(async () => {
     if (!theme || !videoConfig || !researchData) return;
 
     setIsLoading(true);
@@ -158,6 +185,76 @@ function App() {
     }
   }, [theme, videoConfig, researchData]);
 
+  const handleGenerationV2 = useCallback(async () => {
+    if (!theme || !videoConfig || !researchData) return;
+    
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+        setCurrentStep('script');
+        setLoadingMessage('Designing animated scenes (V2)...');
+        const generatedScriptV2 = await geminiService.generateScriptV2(theme, videoConfig.duration, researchData.summary);
+        setScriptV2(generatedScriptV2);
+
+        setLoadingMessage('Analyzing tone for background music...');
+        const fullNarration = generatedScriptV2.map(s => s.narration).join('\n');
+        const suggestion = await geminiService.generateMusicSuggestion(fullNarration);
+        setMusicSuggestion(suggestion);
+
+        setLoadingMessage('Selecting background music...');
+        const musicTrack = await geminiService.selectMusicTrack(theme, suggestion);
+        setSelectedMusic(musicTrack);
+
+        const newMediaAssetsV2 = new Map<string, string>();
+        const newVoiceovers = new Map<string, AudioBuffer>();
+
+        const imageElements: { sceneId: string, element: SceneElement }[] = generatedScriptV2.flatMap(scene =>
+            scene.elements.filter(e => e.type === 'image').map(element => ({ sceneId: scene.id, element }))
+        );
+
+        const totalAssets = imageElements.length + generatedScriptV2.length;
+        let assetsGenerated = 0;
+
+        for (const { element } of imageElements) {
+            assetsGenerated++;
+            setLoadingMessage(`[${assetsGenerated}/${totalAssets}] Generating visual asset...`);
+            if (element.prompt) {
+                const mediaUrl = await geminiService.generateVisual(element.prompt);
+                newMediaAssetsV2.set(element.id, mediaUrl);
+            }
+        }
+
+        for (const scene of generatedScriptV2) {
+            assetsGenerated++;
+            setLoadingMessage(`[${assetsGenerated}/${totalAssets}] Synthesizing voice...`);
+            const audioB64 = await geminiService.generateVoiceover(scene.narration, 'Puck');
+            const decodedAudio = decode(audioB64);
+            const audioBuffer = await decodeAudioData(decodedAudio, audioContext, 24000, 1);
+            newVoiceovers.set(scene.id, audioBuffer);
+        }
+
+        setMediaAssetsV2(newMediaAssetsV2);
+        setVoiceovers(newVoiceovers);
+        setCurrentStep('preview');
+
+    } catch (e) {
+        console.error('V2 generation failed:', e);
+        setError(`V2 generation failed. ${e instanceof Error ? e.message : 'Please try again.'}`);
+    } finally {
+        setIsLoading(false);
+    }
+}, [theme, videoConfig, researchData, audioContext]);
+
+  const handleContinueFromResearch = useCallback(async () => {
+    if (generationVersion === 'v1') {
+        await handleScriptGenerationV1();
+    } else {
+        await handleGenerationV2();
+    }
+  }, [generationVersion, handleScriptGenerationV1, handleGenerationV2]);
+
+
   const handleScriptChange = useCallback((index: number, field: 'narration' | 'visuals', value: string) => {
     setScript(prevScript => {
       if (!prevScript) return null;
@@ -167,7 +264,7 @@ function App() {
     });
   }, []);
 
-  const handlePreviewGeneration = useCallback(async () => {
+  const handlePreviewGenerationV1 = useCallback(async () => {
     if (!script || !theme || !musicSuggestion || !videoConfig) return;
 
     setIsLoading(true);
@@ -223,30 +320,16 @@ function App() {
     }
   }, [script, audioContext, theme, musicSuggestion, videoConfig, initialImageAsset]);
   
-  const handleFinalize = (videoUrl: string, finalScript: ScriptSegment[]) => {
+  const handleFinalize = (videoUrl: string, finalScript: ScriptSegment[] | ScriptSegmentV2[]) => {
     setFinalVideoUrl(videoUrl);
-    setFinalScript(finalScript);
+    if (generationVersion === 'v1') {
+      setFinalScript(finalScript as ScriptSegment[]);
+    } else {
+      setFinalScriptV2(finalScript as ScriptSegmentV2[]);
+    }
     setAppView('download');
   };
 
-  const handleReset = () => {
-    setTheme('');
-    setVideoConfig(null);
-    setResearchData(null);
-    setScript(null);
-    setMusicSuggestion(null);
-    setSelectedMusic(null);
-    setMediaAssets(null);
-    setVoiceovers(new Map());
-    setFinalVideoUrl(null);
-    setFinalScript(null);
-    setCurrentStep('theme');
-    setError(null);
-    setIsLoading(false);
-    setWatermark(null);
-    setInitialImageAsset(null);
-    setAppView('prompt');
-  };
 
   const renderGenerationContent = () => {
     if (isLoading) {
@@ -255,11 +338,34 @@ function App() {
 
     switch (currentStep) {
       case 'research':
-        return researchData && <ResearchDisplay researchData={researchData} onContinue={handleScriptGeneration} theme={theme} />;
+        return researchData && <ResearchDisplay researchData={researchData} onContinue={handleContinueFromResearch} theme={theme} />;
       case 'script':
-        return script && <ScriptDisplay script={script} onGeneratePreview={handlePreviewGeneration} onScriptChange={handleScriptChange} theme={theme} />;
+         // For V2, we skip this view and go to preview
+        return script && generationVersion === 'v1' && <ScriptDisplay script={script} onGeneratePreview={handlePreviewGenerationV1} onScriptChange={handleScriptChange} theme={theme} />;
       case 'preview':
-        return script && mediaAssets && videoConfig && <VideoPreview script={script} mediaAssets={mediaAssets} voiceovers={voiceovers} audioContext={audioContext} onReset={handleReset} theme={theme} config={videoConfig} watermark={watermark} musicSuggestion={musicSuggestion} selectedMusic={selectedMusic} onFinalize={handleFinalize} setScript={setScript} setMediaAssets={setMediaAssets} setVoiceovers={setVoiceovers} setSelectedMusic={setSelectedMusic} />;
+        return videoConfig && (
+            <VideoPreview 
+                script={script}
+                scriptV2={scriptV2}
+                mediaAssets={mediaAssets} 
+                mediaAssetsV2={mediaAssetsV2}
+                voiceovers={voiceovers} 
+                audioContext={audioContext} 
+                onReset={handleReset} 
+                theme={theme} 
+                config={videoConfig} 
+                watermark={watermark} 
+                musicSuggestion={musicSuggestion} 
+                selectedMusic={selectedMusic} 
+                onFinalize={handleFinalize} 
+                setScript={setScript}
+                setScriptV2={setScriptV2}
+                setMediaAssets={setMediaAssets} 
+                setVoiceovers={setVoiceovers} 
+                setSelectedMusic={setSelectedMusic}
+                generationVersion={generationVersion}
+            />
+        );
       default:
          return <Loader message={loadingMessage} />;
     }
@@ -268,12 +374,19 @@ function App() {
   const renderContent = () => {
     switch (appView) {
       case 'prompt':
-        return <PromptInput onGenerate={handleGenerateFromPrompt} initialWatermark={watermark} onOpenOverlay={setActiveOverlay} />;
+        return <PromptInput 
+            onGenerate={handleGenerateFromPrompt} 
+            initialWatermark={watermark} 
+            onOpenOverlay={setActiveOverlay}
+            version={generationVersion}
+            setVersion={setGenerationVersion}
+            disabled={appView !== 'prompt'}
+          />;
       case 'generating':
         return (
           <div className="w-full">
             <div className="container mx-auto px-4 md:px-8 pt-8">
-              <AppStepper currentStep={currentStep} />
+              {generationVersion === 'v1' && <AppStepper currentStep={currentStep} />}
             </div>
             <div className="mt-8">
               {renderGenerationContent()}
@@ -281,7 +394,7 @@ function App() {
           </div>
         );
       case 'download':
-        return finalVideoUrl && finalScript && videoConfig && <DownloadPage videoUrl={finalVideoUrl} script={finalScript} config={videoConfig} theme={theme} onReset={handleReset} />;
+        return finalVideoUrl && videoConfig && <DownloadPage videoUrl={finalVideoUrl} script={finalScript} scriptV2={finalScriptV2} config={videoConfig} theme={theme} onReset={handleReset} />;
       default:
         return null;
     }
@@ -289,9 +402,11 @@ function App() {
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col">
-      <header className="py-6 px-4 sm:px-8 fixed top-0 left-0 w-full z-30 bg-black">
+      <header className="py-6 px-4 sm:px-8 fixed top-0 left-0 w-full z-30 bg-black/80 backdrop-blur-sm">
         <div className="container mx-auto flex justify-between items-center">
-          <ArideoLogo className="h-8 w-auto" />
+          <div>
+            <ArideoLogo className="h-8 w-auto" />
+          </div>
           {appView !== 'prompt' && (
              <button onClick={handleReset} className="text-sm bg-indigo-600 hover:bg-indigo-700 rounded-md px-4 py-2 transition-colors duration-300 shadow-lg hover:shadow-indigo-500/50">
                 Start New Project
@@ -300,7 +415,7 @@ function App() {
         </div>
       </header>
       
-      <main className="flex-grow container mx-auto p-4 md:p-8 flex flex-col items-center justify-center pt-28">
+      <main className="flex-grow container mx-auto p-4 md:p-8 flex flex-col items-center justify-center pt-32">
         {error && (
           <div className="bg-red-900 border border-red-700 text-red-200 px-4 py-3 rounded-lg relative mb-6 w-full max-w-4xl animate-fade-in" role="alert">
             <strong className="font-bold">Error: </strong>

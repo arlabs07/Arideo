@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ScriptSegment, ChatMessage, ToolCall, MediaAsset, MusicTrack } from '../types';
+import { ScriptSegment, ChatMessage, ToolCall, MediaAsset, MusicTrack, ScriptSegmentV2 } from '../types';
 import * as geminiService from '../services/geminiService';
 import { decode, decodeAudioData } from '../utils/audioUtils';
 import { MagicIcon } from './icons/MagicIcon';
@@ -7,15 +7,17 @@ import { UploadIcon } from './icons/UploadIcon';
 import { MusicNoteIcon } from './icons/MusicNoteIcon';
 
 interface ChatbotProps {
-    script: ScriptSegment[];
+    script: (ScriptSegment | ScriptSegmentV2)[] | null;
     setScript: React.Dispatch<React.SetStateAction<ScriptSegment[] | null>>;
+    setScriptV2: React.Dispatch<React.SetStateAction<ScriptSegmentV2[] | null>>;
     setMediaAssets: React.Dispatch<React.SetStateAction<MediaAsset[] | null>>;
     setVoiceovers: React.Dispatch<React.SetStateAction<Map<string, AudioBuffer>>>;
     audioContext: AudioContext;
     setSelectedMusic: React.Dispatch<React.SetStateAction<MusicTrack | null>>;
+    generationVersion: 'v1' | 'v2';
 }
 
-const Chatbot: React.FC<ChatbotProps> = ({ script, setScript, setMediaAssets, setVoiceovers, audioContext, setSelectedMusic }) => {
+const Chatbot: React.FC<ChatbotProps> = ({ script, setScript, setScriptV2, setMediaAssets, setVoiceovers, audioContext, setSelectedMusic, generationVersion }) => {
     const [history, setHistory] = useState<ChatMessage[]>([]);
     const [input, setInput] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
@@ -62,7 +64,15 @@ const Chatbot: React.FC<ChatbotProps> = ({ script, setScript, setMediaAssets, se
 
 
     const handleToolCall = async (toolCall: ToolCall) => {
+        if (!script) return;
         const { name, args } = toolCall;
+
+        if (name === 'change_visual' || name === 'add_scene' || name === 'replace_visual_with_user_image') {
+            if (generationVersion === 'v2') {
+                 setHistory(prev => [...prev, { role: 'model', parts: [{ text: `Editing visual elements for V2 videos via chat is coming soon! For now, you can change narrations or the background music.` }] }]);
+                 return;
+            }
+        }
 
         if (name === 'change_visual') {
             const { scene_number, new_visual_description } = args;
@@ -99,11 +109,12 @@ const Chatbot: React.FC<ChatbotProps> = ({ script, setScript, setMediaAssets, se
                 
                 const segmentId = script[sceneIndex].id;
 
-                setScript(prev => {
+                const scriptUpdater = generationVersion === 'v1' ? setScript : setScriptV2;
+                scriptUpdater(prev => {
                     if(!prev) return null;
-                    const newScript = [...prev];
+                    const newScript = [...prev] as any[];
                     newScript[sceneIndex] = { ...newScript[sceneIndex], narration: new_narration_text };
-                    return newScript;
+                    return newScript as any;
                 });
 
                 setVoiceovers(prev => {
@@ -126,7 +137,7 @@ const Chatbot: React.FC<ChatbotProps> = ({ script, setScript, setMediaAssets, se
 
                 const newSegment: ScriptSegment = {
                     id: `segment-${Date.now()}`,
-                    timestamp: "00:00 - 00:00", // Will need re-calculation, but fine for now
+                    timestamp: "00:00 - 00:00",
                     visuals: visual_description,
                     narration: narration_text,
                     transition: "Cut to"
@@ -188,7 +199,7 @@ const Chatbot: React.FC<ChatbotProps> = ({ script, setScript, setMediaAssets, se
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!input.trim() || isProcessing) return;
+        if (!input.trim() || isProcessing || !script) return;
 
         const userMessage: ChatMessage = { role: 'user', parts: [{ text: input }] };
         const newHistory = [...history, userMessage];
@@ -197,7 +208,9 @@ const Chatbot: React.FC<ChatbotProps> = ({ script, setScript, setMediaAssets, se
         setIsProcessing(true);
 
         try {
-            const { text, toolCalls } = await geminiService.processChatRequest(newHistory, script);
+            // NOTE: Chatbot currently only supports V1 script format for full context
+            const contextScript = generationVersion === 'v1' ? (script as ScriptSegment[]) : [];
+            const { text, toolCalls } = await geminiService.processChatRequest(newHistory, contextScript);
 
             if (text) {
                 setHistory(prev => [...prev, { role: 'model', parts: [{ text }] }]);

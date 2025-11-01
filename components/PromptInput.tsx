@@ -5,11 +5,15 @@ import { ExplainerIcon } from './icons/ExplainerIcon';
 import { ScriptIcon } from './icons/ScriptIcon';
 import { AdIcon } from './icons/AdIcon';
 import { MagicIcon } from './icons/MagicIcon';
+import VersionSwitcher from './VersionSwitcher';
 
 interface PromptInputProps {
   onGenerate: (prompt: string, watermark: string | null, userImage: string | null) => void;
   initialWatermark: string | null;
   onOpenOverlay: (overlayId: string) => void;
+  version: 'v1' | 'v2';
+  setVersion: (version: 'v1' | 'v2') => void;
+  disabled: boolean;
 }
 
 const presetButtons = [
@@ -19,7 +23,7 @@ const presetButtons = [
   { id: 'ad', icon: AdIcon, text: 'Create UGC Ad', color: 'text-amber-400' },
 ];
 
-const PromptInput: React.FC<PromptInputProps> = ({ onGenerate, initialWatermark, onOpenOverlay }) => {
+const PromptInput: React.FC<PromptInputProps> = ({ onGenerate, initialWatermark, onOpenOverlay, version, setVersion, disabled }) => {
   const [prompt, setPrompt] = useState('');
   const [watermark, setWatermark] = useState<string | null>(initialWatermark);
   const [userImage, setUserImage] = useState<string | null>(null);
@@ -67,8 +71,13 @@ const PromptInput: React.FC<PromptInputProps> = ({ onGenerate, initialWatermark,
   );
 
   return (
-    <div className="w-full max-w-4xl flex flex-col items-center animate-fade-in-up">
-      <form onSubmit={handleSubmit} className="w-full bg-[#1A1A1A] rounded-2xl p-4 flex flex-col shadow-2xl shadow-indigo-900/20 border border-gray-800">
+    <div className="w-full max-w-4xl flex flex-col items-start animate-fade-in-up">
+       <VersionSwitcher 
+          version={version} 
+          setVersion={setVersion} 
+          disabled={disabled}
+      />
+      <form onSubmit={handleSubmit} className="w-full bg-[#1A1A1A] rounded-2xl p-4 flex flex-col shadow-2xl shadow-indigo-900/20 border border-gray-800 mt-4">
         <textarea
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
