@@ -1,13 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ScriptSegment, ChatMessage, ToolCall, MediaAsset, MusicTrack, ScriptSegmentV2 } from '../types';
+import { ScriptSegment, ChatMessage, ToolCall, MediaAsset, MusicTrack, ScriptSegmentV2, MusicSuggestion } from '../types';
 import * as geminiService from '../services/geminiService';
 import { decode, decodeAudioData } from '../utils/audioUtils';
-import { MagicIcon } from './icons/MagicIcon';
-import { UploadIcon } from './icons/UploadIcon';
-import { MusicNoteIcon } from './icons/MusicNoteIcon';
 
 interface ChatbotProps {
     script: (ScriptSegment | ScriptSegmentV2)[] | null;
+    theme: string;
     setScript: React.Dispatch<React.SetStateAction<ScriptSegment[] | null>>;
     setScriptV2: React.Dispatch<React.SetStateAction<ScriptSegmentV2[] | null>>;
     setMediaAssets: React.Dispatch<React.SetStateAction<MediaAsset[] | null>>;
@@ -15,17 +13,16 @@ interface ChatbotProps {
     audioContext: AudioContext;
     setSelectedMusic: React.Dispatch<React.SetStateAction<MusicTrack | null>>;
     generationVersion: 'v1' | 'v2';
+    onOpenMusicLibrary: () => void;
 }
 
-const Chatbot: React.FC<ChatbotProps> = ({ script, setScript, setScriptV2, setMediaAssets, setVoiceovers, audioContext, setSelectedMusic, generationVersion }) => {
+const Chatbot: React.FC<ChatbotProps> = ({ script, theme, setScript, setScriptV2, setMediaAssets, setVoiceovers, audioContext, setSelectedMusic, generationVersion, onOpenMusicLibrary }) => {
     const [history, setHistory] = useState<ChatMessage[]>([]);
     const [input, setInput] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
     const [uploadedImage, setUploadedImage] = useState<string | null>(null);
-    const [uploadedMusic, setUploadedMusic] = useState<{ url: string; name: string; duration: number; } | null>(null);
     
     const imageInputRef = useRef<HTMLInputElement>(null);
-    const musicInputRef = useRef<HTMLInputElement>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
     const scrollToBottom = () => {
@@ -45,23 +42,6 @@ const Chatbot: React.FC<ChatbotProps> = ({ script, setScript, setScriptV2, setMe
             reader.readAsDataURL(file);
         }
     };
-
-    const handleMusicUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (file && file.type.startsWith('audio/')) {
-            const reader = new FileReader();
-            reader.onload = (event) => {
-                const url = event.target?.result as string;
-                const audio = new Audio(url);
-                audio.onloadedmetadata = () => {
-                   setUploadedMusic({ url, name: file.name, duration: audio.duration });
-                   setHistory(prev => [...prev, { role: 'model', parts: [{ text: `Audio "${file.name}" is ready. Ask me to use it as the background music.`}] }]);
-                };
-            };
-            reader.readAsDataURL(file);
-        }
-    };
-
 
     const handleToolCall = async (toolCall: ToolCall) => {
         if (!script) return;
@@ -103,7 +83,8 @@ const Chatbot: React.FC<ChatbotProps> = ({ script, setScript, setScriptV2, setMe
                  return;
             }
             try {
-                const audioB64 = await geminiService.generateVoiceover(new_narration_text);
+                const currentVoice = (script[sceneIndex] as ScriptSegment)?.voice || (script[sceneIndex] as ScriptSegmentV2)?.voice || 'Puck';
+                const audioB64 = await geminiService.generateVoiceover(new_narration_text, currentVoice);
                 const decodedAudio = decode(audioB64);
                 const audioBuffer = await decodeAudioData(decodedAudio, audioContext, 24000, 1);
                 
@@ -128,10 +109,10 @@ const Chatbot: React.FC<ChatbotProps> = ({ script, setScript, setScriptV2, setMe
             }
 
         } else if (name === 'add_scene') {
-            const { visual_description, narration_text } = args;
+            const { visual_description, narration_text, voice } = args;
              try {
                 const newImageUrl = await geminiService.generateVisual(visual_description);
-                const audioB64 = await geminiService.generateVoiceover(narration_text);
+                const audioB64 = await geminiService.generateVoiceover(narration_text, voice || 'Puck');
                 const decodedAudio = decode(audioB64);
                 const audioBuffer = await decodeAudioData(decodedAudio, audioContext, 24000, 1);
 
@@ -140,7 +121,8 @@ const Chatbot: React.FC<ChatbotProps> = ({ script, setScript, setScriptV2, setMe
                     timestamp: "00:00 - 00:00",
                     visuals: visual_description,
                     narration: narration_text,
-                    transition: "Cut to"
+                    transition: "Cut to",
+                    voice: voice || 'Puck'
                 };
                  const newMediaAsset: MediaAsset = {
                     segmentId: newSegment.id,
@@ -178,22 +160,29 @@ const Chatbot: React.FC<ChatbotProps> = ({ script, setScript, setScriptV2, setMe
             });
             setUploadedImage(null); // consume image
         } else if (name === 'change_background_music') {
-             if (!uploadedMusic) {
-                setHistory(prev => [...prev, { role: 'model', parts: [{ text: "You haven't uploaded an audio file. Please upload one first." }] }]);
-                return;
+            const { mood, genre } = args;
+            let suggestion: MusicSuggestion | null = null;
+
+            if (mood || genre) {
+                suggestion = { mood: mood || 'any', genre: genre || 'any' };
+            } else {
+                const fullScriptText = script.map(s => s.narration).join('\n');
+                suggestion = await geminiService.generateMusicSuggestion(fullScriptText);
             }
-            const newTrack: MusicTrack = {
-                id: 'custom-track-' + Date.now(),
-                title: uploadedMusic.name,
-                artist: 'You',
-                url: uploadedMusic.url,
-                genre: 'Custom',
-                moods: ['custom'],
-                duration: uploadedMusic.duration
-            };
-            setSelectedMusic(newTrack);
-            setHistory(prev => [...prev, { role: 'model', parts: [{ text: `Okay, I've set the background music to your uploaded track: "${uploadedMusic.name}".` }] }]);
-            setUploadedMusic(null);
+
+            if (suggestion) {
+                try {
+                    const newTrack = await geminiService.selectMusicTrack(theme, suggestion);
+                    if (newTrack) {
+                        setSelectedMusic(newTrack);
+                        setHistory(prev => [...prev, { role: 'model', parts: [{ text: `I've changed the background music to "${newTrack.title}". Let me know what you think!` }] }]);
+                    } else {
+                        setHistory(prev => [...prev, { role: 'model', parts: [{ text: "I couldn't find a suitable new track. Please try a different suggestion." }] }]);
+                    }
+                } catch (e) {
+                    setHistory(prev => [...prev, { role: 'model', parts: [{ text: "I had trouble changing the music. Please try again." }] }]);
+                }
+            }
         }
     };
 
@@ -231,9 +220,19 @@ const Chatbot: React.FC<ChatbotProps> = ({ script, setScript, setScriptV2, setMe
 
     return (
         <div className="bg-gray-900/50 border border-gray-700 rounded-lg flex flex-col h-full max-h-[75vh] lg:max-h-full shadow-lg">
-            <div className="p-4 border-b border-gray-700 flex-shrink-0">
-                <h3 className="font-semibold text-lg text-white">AI Video Assistant</h3>
-                <p className="text-sm text-gray-400">Tell me what you want to change.</p>
+            <div className="p-4 border-b border-gray-700 flex-shrink-0 flex justify-between items-center">
+                <div>
+                    <h3 className="font-semibold text-lg text-white">AI Video Assistant</h3>
+                    <p className="text-sm text-gray-400">Tell me what you want to change.</p>
+                </div>
+                <button
+                    onClick={onOpenMusicLibrary}
+                    className="flex items-center gap-2 px-3 py-2 bg-purple-600/20 text-purple-300 border border-purple-600/50 rounded-lg hover:bg-purple-600/40 transition-colors text-sm font-semibold"
+                    title="Open Music Library"
+                >
+                    <span className="material-symbols-outlined text-base">music_note</span>
+                    <span>Library</span>
+                </button>
             </div>
             <div className="flex-grow p-4 space-y-4 overflow-y-auto">
                 {history.map((msg, index) => (
@@ -271,40 +270,22 @@ const Chatbot: React.FC<ChatbotProps> = ({ script, setScript, setScriptV2, setMe
                             </button>
                         </div>
                     )}
-                    {uploadedMusic && (
-                        <div className="relative h-16 p-2 bg-gray-700 rounded-md flex items-center group">
-                            <MusicNoteIcon className="w-6 h-6 text-indigo-300 mr-2"/>
-                            <span className="text-xs text-gray-300 w-24 truncate">{uploadedMusic.name}</span>
-                             <button 
-                                type="button" 
-                                onClick={() => setUploadedMusic(null)}
-                                className="absolute -top-2 -right-2 bg-red-600 text-white rounded-full h-5 w-5 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity"
-                                aria-label="Remove uploaded music"
-                            >
-                                &#x2715;
-                            </button>
-                        </div>
-                    )}
                 </div>
                 <div className="flex items-center gap-2 bg-gray-800 rounded-lg pr-2">
                      <input type="file" accept="image/*" className="hidden" ref={imageInputRef} onChange={handleImageUpload} />
                     <button type="button" onClick={() => imageInputRef.current?.click()} className="p-3 text-gray-400 hover:text-white transition-colors" title="Upload Image">
-                        <UploadIcon className="w-5 h-5" />
-                    </button>
-                    <input type="file" accept="audio/*" className="hidden" ref={musicInputRef} onChange={handleMusicUpload} />
-                    <button type="button" onClick={() => musicInputRef.current?.click()} className="p-3 text-gray-400 hover:text-white transition-colors" title="Upload Background Music">
-                        <MusicNoteIcon className="w-5 h-5" />
+                        <span className="material-symbols-outlined">upload</span>
                     </button>
                     <input 
                         type="text"
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
-                        placeholder="e.g., Use my uploaded music"
+                        placeholder="e.g., Change music to upbeat"
                         className="w-full bg-transparent p-3 focus:outline-none text-gray-200 placeholder-gray-500"
                         disabled={isProcessing}
                     />
                      <button type="submit" disabled={!input.trim() || isProcessing} className="bg-indigo-600 text-white rounded-md p-2 hover:bg-indigo-700 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors">
-                        <MagicIcon className="w-5 h-5" />
+                        <span className="material-symbols-outlined">auto_awesome</span>
                     </button>
                 </div>
             </form>

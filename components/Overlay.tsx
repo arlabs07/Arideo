@@ -1,15 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { VoiceIcon } from './icons/VoiceIcon';
-import { SubtitlesIcon } from './icons/SubtitlesIcon';
-import { CheckIcon } from './icons/CheckIcon';
-import { CloseIcon } from './CloseIcon';
-import { AspectRatioIcon } from './icons/AspectRatioIcon';
-import { TimingIcon } from './icons/TimingIcon';
+import { VideoConfig } from '../types';
 
 interface OverlayProps {
   activeOverlay: string;
   onClose: () => void;
-  onGenerate: (prompt: string, watermark: string | null) => void;
+  onGenerate: (
+    data: { type: 'prompt', prompt: string } | { type: 'script', scriptText: string, config: VideoConfig },
+    watermark: string | null
+  ) => void;
   watermark: string | null;
 }
 
@@ -54,10 +52,10 @@ const durations = [
 
 
 const settingButtonsConfig = [
-    { id: 'voice', icon: VoiceIcon, text: 'Voice Actor' },
-    { id: 'timing', icon: TimingIcon, text: 'Timing' },
-    { id: 'aspectRatio', icon: AspectRatioIcon, text: 'Aspect Ratio' },
-    { id: 'subtitles', icon: SubtitlesIcon, text: 'Subtitles' },
+    { id: 'voice', icon: 'mic', text: 'Voice Actor' },
+    { id: 'timing', icon: 'schedule', text: 'Timing' },
+    { id: 'aspectRatio', icon: 'aspect_ratio', text: 'Aspect Ratio' },
+    { id: 'subtitles', icon: 'subtitles', text: 'Subtitles' },
 ];
 
 const OptionButtonGroup = ({ options, selected, onSelect, className = '' }: { options: { id: string, name: string}[], selected: string, onSelect: (id: string) => void, className?: string}) => (
@@ -95,7 +93,7 @@ const Overlay: React.FC<OverlayProps> = ({ activeOverlay, onClose, onGenerate, w
     const [settings, setSettings] = useState({
         voice: 'Puck',
         subtitles: true,
-        aspectRatio: '9:16',
+        aspectRatio: '9:16' as '16:9' | '9:16' | '1:1' | '2.35:1',
         duration: '30'
     });
     const [activeSetting, setActiveSetting] = useState<string | null>(null);
@@ -105,7 +103,7 @@ const Overlay: React.FC<OverlayProps> = ({ activeOverlay, onClose, onGenerate, w
         setTopic(''); setExtraInfo(''); setScript(''); setProduct('');
         setActiveSetting(null);
         
-        let newAspectRatio = '9:16';
+        let newAspectRatio: '16:9' | '9:16' | '1:1' | '2.35:1' = '9:16';
         let newDuration = '30';
 
         switch(activeOverlay) {
@@ -123,25 +121,36 @@ const Overlay: React.FC<OverlayProps> = ({ activeOverlay, onClose, onGenerate, w
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        let basePrompt = '';
-        switch(activeOverlay) {
-            case 'short': basePrompt = `Create a short video about "${topic}".`; break;
-            case 'explainer': basePrompt = `Create an explainer video about "${topic}". Additional info: ${extraInfo}`; break;
-            case 'script': basePrompt = `Create a video using exactly this script: "${script}"`; break;
-            case 'ad': basePrompt = `Create a UGC ad for the product "${product}".`; break;
+
+        if (activeOverlay === 'script') {
+            if (script.trim()) {
+                const videoSettings: VideoConfig = {
+                    duration: parseInt(settings.duration, 10),
+                    aspectRatio: settings.aspectRatio,
+                    subtitles: settings.subtitles,
+                    voicePreference: `Use the ${settings.voice} voice.`,
+                };
+                onGenerate({ type: 'script', scriptText: script, config: videoSettings }, watermark);
+            }
+            return;
         }
 
-        const settingsText = `
----
-Video Settings:
-- Duration: ${settings.duration} seconds
-- Aspect Ratio: ${settings.aspectRatio}
-- Voice Actor: ${settings.voice}
-- Subtitles: ${settings.subtitles ? 'Yes' : 'No'}
----
-        `;
+        let prompt = '';
+        switch(activeOverlay) {
+            case 'short': 
+                prompt = `Create a short ${settings.duration}s video for ${settings.aspectRatio} about "${topic}". Make it visually engaging. ${settings.subtitles ? 'Include subtitles.' : 'No subtitles.'} The voice should be ${settings.voice}.`;
+                break;
+            case 'explainer': 
+                prompt = `Create an explainer video, about ${settings.duration} seconds long, in ${settings.aspectRatio} format about "${topic}". Additional info: ${extraInfo}. Use a professional, clear voice like ${settings.voice}. ${settings.subtitles ? 'Include subtitles.' : 'No subtitles.'}`;
+                break;
+            case 'ad': 
+                prompt = `Create a ${settings.duration} second UGC-style ad in ${settings.aspectRatio} for the product "${product}". Make it energetic and use an upbeat voice like ${settings.voice}. ${settings.subtitles ? 'Be sure to include subtitles.' : 'No subtitles needed.'}`;
+                break;
+        }
 
-        if (basePrompt) onGenerate(basePrompt + settingsText, watermark);
+        if (prompt.trim()) {
+            onGenerate({ type: 'prompt', prompt }, watermark);
+        }
     };
 
     const renderFormFields = () => {
@@ -170,7 +179,21 @@ Video Settings:
                 return (
                      <div>
                         <label className="font-semibold mb-2 block text-gray-300">Script:</label>
-                        <textarea value={script} onChange={e => setScript(e.target.value)} placeholder="Paste your full video script here." className="w-full h-40 bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all resize-none" required />
+                        <textarea 
+                            value={script} 
+                            onChange={e => setScript(e.target.value)} 
+                            placeholder={`Paste your script here. Use a clear format for each scene, for example:
+
+Scene 1:
+Visual: A detailed description of the image.
+Narration: The voiceover for this scene.
+
+Scene 2:
+Visual: Another visual description.
+Narration: The second line of narration.`} 
+                            className="w-full h-48 bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all resize-none font-mono text-sm" 
+                            required 
+                        />
                     </div>
                 );
             case 'ad':
@@ -242,7 +265,9 @@ Video Settings:
 
         return (
             <div className="mt-4 bg-gray-900/70 p-4 rounded-lg border border-gray-700 relative animate-fade-in-up">
-                 <button type="button" onClick={() => setActiveSetting(null)} className="absolute top-2 right-2 p-1 text-gray-400 hover:text-white"><CloseIcon className="w-5 h-5"/></button>
+                 <button type="button" onClick={() => setActiveSetting(null)} className="absolute top-2 right-2 p-1 text-gray-400 hover:text-white">
+                    <span className="material-symbols-outlined text-xl">close</span>
+                 </button>
                  {content}
             </div>
         );
@@ -270,9 +295,9 @@ Video Settings:
                     const isSet = !!settings[s.id as keyof typeof settings] || s.id === 'voice';
                     return (
                         <button key={s.id} type="button" onClick={() => setActiveSetting(isActive ? null : s.id)} className={`flex items-center gap-2 px-3 py-2 border rounded-md transition-colors text-sm ${isActive ? 'bg-indigo-600 border-indigo-500 text-white' : isSet ? 'bg-gray-700 border-gray-600 text-gray-200 hover:bg-gray-600' : 'bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700'}`}>
-                            <s.icon className={`w-4 h-4 ${isActive ? 'text-white' : isSet ? 'text-indigo-300' : 'text-gray-500'}`} />
+                            <span className={`material-symbols-outlined text-base ${isActive ? 'text-white' : isSet ? 'text-indigo-300' : 'text-gray-500'}`}>{s.icon}</span>
                             <span>{s.text}</span>
-                            {!isActive && isSet && <CheckIcon className="w-4 h-4 text-green-400" />}
+                            {!isActive && isSet && <span className="material-symbols-outlined text-base text-green-400">check</span>}
                         </button>
                     )
                 })}

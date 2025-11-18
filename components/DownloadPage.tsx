@@ -2,9 +2,6 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { ScriptSegment, VideoConfig, VideoMetadata, ScriptSegmentV2 } from '../types';
 import * as geminiService from '../services/geminiService';
 import Loader from './Loader';
-import { DownloadIcon } from './icons/DownloadIcon';
-import { ClipboardIcon } from './icons/ClipboardIcon';
-import { CheckIcon } from './icons/CheckIcon';
 
 interface DownloadPageProps {
     videoUrl: string;
@@ -67,7 +64,7 @@ const DownloadPage: React.FC<DownloadPageProps> = ({ videoUrl, script, scriptV2,
 
             <div className="text-center mb-12">
                 <a href={videoUrl} download={`${(theme || 'arideo_video').replace(/\s+/g, '_')}.webm`} className="inline-flex items-center gap-3 bg-green-600 text-white font-semibold rounded-lg px-8 py-4 text-lg hover:bg-green-700 transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-green-500/50">
-                    <DownloadIcon className="w-6 h-6" />
+                    <span className="material-symbols-outlined">download</span>
                     Download Video
                 </a>
             </div>
@@ -86,7 +83,7 @@ const DownloadPage: React.FC<DownloadPageProps> = ({ videoUrl, script, scriptV2,
                                 <div className="relative">
                                     <p className="w-full bg-gray-800 rounded-md p-3 pr-12">{videoMetadata.title}</p>
                                     <button onClick={() => handleCopyToClipboard(videoMetadata.title, 'title')} className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-400 hover:text-white transition-colors rounded-md">
-                                        {copiedStates['title'] ? <CheckIcon className="w-5 h-5 text-green-500"/> : <ClipboardIcon className="w-5 h-5"/>}
+                                        {copiedStates['title'] ? <span className="material-symbols-outlined text-green-500">check</span> : <span className="material-symbols-outlined">content_paste</span>}
                                     </button>
                                 </div>
                             </div>
@@ -95,7 +92,7 @@ const DownloadPage: React.FC<DownloadPageProps> = ({ videoUrl, script, scriptV2,
                                 <div className="relative">
                                     <p className="w-full bg-gray-800 rounded-md p-3 pr-12 h-40 overflow-y-auto whitespace-pre-wrap">{videoMetadata.description}</p>
                                     <button onClick={() => handleCopyToClipboard(videoMetadata.description, 'desc')} className="absolute right-2 top-3 p-2 text-gray-400 hover:text-white transition-colors rounded-md">
-                                        {copiedStates['desc'] ? <CheckIcon className="w-5 h-5 text-green-500"/> : <ClipboardIcon className="w-5 h-5"/>}
+                                        {copiedStates['desc'] ? <span className="material-symbols-outlined text-green-500">check</span> : <span className="material-symbols-outlined">content_paste</span>}
                                     </button>
                                 </div>
                             </div>
@@ -106,7 +103,7 @@ const DownloadPage: React.FC<DownloadPageProps> = ({ videoUrl, script, scriptV2,
                                         {videoMetadata.chapters.map(c => `${c.timestamp} - ${c.title}`).join('\n')}
                                     </div>
                                     <button onClick={() => handleCopyToClipboard(videoMetadata.chapters.map(c => `${c.timestamp} - ${c.title}`).join('\n'), 'chapters')} className="absolute right-2 top-3 p-2 text-gray-400 hover:text-white transition-colors rounded-md">
-                                        {copiedStates['chapters'] ? <CheckIcon className="w-5 h-5 text-green-500"/> : <ClipboardIcon className="w-5 h-5"/>}
+                                        {copiedStates['chapters'] ? <span className="material-symbols-outlined text-green-500">check</span> : <span className="material-symbols-outlined">content_paste</span>}
                                     </button>
                                 </div>
                             </div>
@@ -119,7 +116,7 @@ const DownloadPage: React.FC<DownloadPageProps> = ({ videoUrl, script, scriptV2,
                                         </div>
                                     </div>
                                     <button onClick={() => handleCopyToClipboard(videoMetadata.tags.join(', '), 'tags')} className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-400 hover:text-white transition-colors rounded-md">
-                                        {copiedStates['tags'] ? <CheckIcon className="w-5 h-5 text-green-500"/> : <ClipboardIcon className="w-5 h-5"/>}
+                                        {copiedStates['tags'] ? <span className="material-symbols-outlined text-green-500">check</span> : <span className="material-symbols-outlined">content_paste</span>}
                                     </button>
                                 </div>
                             </div>

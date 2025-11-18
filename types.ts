@@ -5,12 +5,18 @@ export interface ScriptSegment {
   visuals: string;
   narration: string;
   transition: string;
+  voice?: string;
 }
 
 export interface ElementAnimation {
-  type: 'fade-in' | 'slide-in-left' | 'slide-in-right' | 'slide-in-top' | 'slide-in-bottom' | 'zoom-in';
+  type: 'fade-in' | 'slide-in-left' | 'slide-in-right' | 'slide-in-top' | 'slide-in-bottom' | 'zoom-in' | 'zoom-out' | 'scale-up' | 'rotate-in';
   start: number;
   duration: number;
+  exit?: {
+    type: 'fade-out' | 'slide-out-left' | 'slide-out-right' | 'slide-out-top' | 'slide-out-bottom' | 'zoom-out';
+    start: number;
+    duration: number;
+  };
 }
 
 export interface SceneElement {
@@ -39,6 +45,7 @@ export interface ScriptSegmentV2 {
   id: string;
   narration: string;
   elements: SceneElement[];
+  voice?: string;
 }
 
 export interface MediaAsset {
@@ -53,6 +60,10 @@ export type AspectRatio = '16:9' | '9:16' | '1:1' | '2.35:1';
 export interface VideoConfig {
   aspectRatio: AspectRatio;
   duration: number; // in seconds
+  subtitles?: boolean;
+  voiceStyle?: 'concise' | 'standard' | 'longer voice over';
+  voicePreference?: string;
+  stylePreference?: string;
 }
 
 export interface MusicSuggestion {

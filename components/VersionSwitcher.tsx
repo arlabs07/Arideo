@@ -1,7 +1,4 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { CheckIcon } from './icons/CheckIcon';
-import { MagicIcon } from './icons/MagicIcon';
-import { WorkflowIcon } from './icons/WorkflowIcon';
 
 interface VersionSwitcherProps {
   version: 'v1' | 'v2';
@@ -14,13 +11,13 @@ const versions = {
     name: 'V1',
     title: 'V1',
     description: 'Standard image-based generation.',
-    icon: MagicIcon,
+    icon: 'auto_awesome',
   },
   v2: {
     name: 'V2',
     title: 'V2',
     description: 'Dynamic canvas with animated motion graphics.',
-    icon: WorkflowIcon,
+    icon: 'account_tree',
   },
 };
 
@@ -55,12 +52,12 @@ const VersionSwitcher: React.FC<VersionSwitcherProps> = ({ version, setVersion, 
         aria-expanded={isOpen}
       >
         <div className="flex items-center gap-3">
-          <selectedVersion.icon className="w-5 h-5 text-indigo-400" />
+          <span className="material-symbols-outlined text-indigo-400">{selectedVersion.icon}</span>
           <span className="font-semibold text-white">{selectedVersion.name}</span>
         </div>
-        <svg className={`w-5 h-5 text-gray-400 transition-transform duration-200 ${isOpen ? 'transform rotate-180' : ''}`} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-          <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-        </svg>
+        <span className={`material-symbols-outlined text-gray-400 transition-transform duration-200 ${isOpen ? 'transform rotate-180' : ''}`}>
+            arrow_drop_down
+        </span>
       </button>
 
       {isOpen && (
@@ -75,13 +72,13 @@ const VersionSwitcher: React.FC<VersionSwitcherProps> = ({ version, setVersion, 
               aria-selected={version === key}
             >
               <div className="flex items-center gap-3">
-                <value.icon className={`w-5 h-5 ${version === key ? 'text-indigo-400' : 'text-gray-500'}`} />
+                <span className={`material-symbols-outlined ${version === key ? 'text-indigo-400' : 'text-gray-500'}`}>{value.icon}</span>
                 <div>
                   <span className="font-semibold text-white">{value.title}</span>
                   <span className="text-xs text-gray-400 block">{value.description}</span>
                 </div>
               </div>
-              {version === key && <CheckIcon className="w-5 h-5 text-green-400" />}
+              {version === key && <span className="material-symbols-outlined text-green-400">check</span>}
             </button>
           ))}
         </div>

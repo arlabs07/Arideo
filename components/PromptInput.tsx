@@ -1,10 +1,4 @@
 import React, { useState, useRef } from 'react';
-import { UploadIcon } from './icons/UploadIcon';
-import { VideoIcon } from './icons/VideoIcon';
-import { ExplainerIcon } from './icons/ExplainerIcon';
-import { ScriptIcon } from './icons/ScriptIcon';
-import { AdIcon } from './icons/AdIcon';
-import { MagicIcon } from './icons/MagicIcon';
 import VersionSwitcher from './VersionSwitcher';
 
 interface PromptInputProps {
@@ -17,10 +11,10 @@ interface PromptInputProps {
 }
 
 const presetButtons = [
-  { id: 'short', icon: VideoIcon, text: 'Create short video', color: 'text-rose-400' },
-  { id: 'explainer', icon: ExplainerIcon, text: 'Make explainer video', color: 'text-sky-400' },
-  { id: 'script', icon: ScriptIcon, text: 'Use my script', color: 'text-fuchsia-400' },
-  { id: 'ad', icon: AdIcon, text: 'Create UGC Ad', color: 'text-amber-400' },
+  { id: 'short', icon: 'videocam', text: 'Create short video', color: 'text-rose-400' },
+  { id: 'explainer', icon: 'quiz', text: 'Make explainer video', color: 'text-sky-400' },
+  { id: 'script', icon: 'description', text: 'Use my script', color: 'text-fuchsia-400' },
+  { id: 'ad', icon: 'campaign', text: 'Create UGC Ad', color: 'text-amber-400' },
 ];
 
 const PromptInput: React.FC<PromptInputProps> = ({ onGenerate, initialWatermark, onOpenOverlay, version, setVersion, disabled }) => {
@@ -65,7 +59,7 @@ const PromptInput: React.FC<PromptInputProps> = ({ onGenerate, initialWatermark,
       onClick={() => onOpenOverlay(preset.id)}
       className="flex items-center gap-2 sm:px-4 sm:py-2 p-2 bg-[#1A1A1A] text-gray-300 hover:bg-gray-800 rounded-full transition-colors text-sm"
     >
-      <preset.icon className={`w-5 h-5 ${preset.color}`} />
+      <span className={`material-symbols-outlined ${preset.color}`}>{preset.icon}</span>
       <span className="hidden sm:inline">{preset.text}</span>
     </button>
   );
@@ -99,7 +93,7 @@ const PromptInput: React.FC<PromptInputProps> = ({ onGenerate, initialWatermark,
                     onClick={() => watermarkInputRef.current?.click()}
                     className="flex items-center gap-2 px-3 py-2 border border-gray-600 text-gray-300 hover:bg-gray-700 rounded-full transition-colors text-sm"
                 >
-                    <UploadIcon className="w-5 h-5" />
+                    <span className="material-symbols-outlined text-base">upload</span>
                     <span className="hidden sm:inline">{watermark ? 'Change' : 'Add'} Watermark</span>
                 </button>
 
@@ -115,7 +109,7 @@ const PromptInput: React.FC<PromptInputProps> = ({ onGenerate, initialWatermark,
                     onClick={() => userImageInputRef.current?.click()}
                     className="flex items-center gap-2 px-3 py-2 border border-gray-600 text-gray-300 hover:bg-gray-700 rounded-full transition-colors text-sm"
                 >
-                    <UploadIcon className="w-5 h-5" />
+                    <span className="material-symbols-outlined text-base">upload</span>
                     <span className="hidden sm:inline">{userImage ? 'Change' : 'Upload'} Asset</span>
                 </button>
 
@@ -153,7 +147,7 @@ const PromptInput: React.FC<PromptInputProps> = ({ onGenerate, initialWatermark,
             className="bg-blue-600 text-white font-semibold rounded-lg px-4 sm:px-6 py-3 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed transition-all duration-300 transform hover:scale-105 flex items-center gap-2"
           >
             <span className="hidden sm:inline">Generate my video</span>
-            <MagicIcon className="w-5 h-5" />
+            <span className="material-symbols-outlined">auto_awesome</span>
           </button>
         </div>
       </form>

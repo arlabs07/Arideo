@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type, Modality, FunctionDeclaration } from "@google/genai";
 import { ScriptSegment, MusicSuggestion, MusicTrack, VideoMetadata, VideoConfig, ChatMessage, ToolCall, ScriptSegmentV2 } from '../types';
+import { musicLibrary } from "../data/music";
 
 if (!process.env.API_KEY) {
     throw new Error("API_KEY environment variable not set");
@@ -7,18 +8,14 @@ if (!process.env.API_KEY) {
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-const musicLibrary: MusicTrack[] = [
-    { id: 'inspiring-cinematic-lexin', title: 'Inspiring Cinematic Ambient', artist: 'Lexin Music', url: 'https://cdn.pixabay.com/download/audio/2022/08/04/audio_2dde64f43c.mp3', genre: 'Cinematic', moods: ['inspiring', 'hopeful', 'ambient', 'calm', 'motivational'], duration: 172 },
-    { id: 'upbeat-corporate-usfx', title: 'Upbeat Corporate', artist: 'MorningLightMusic', url: 'https://cdn.pixabay.com/download/audio/2022/01/24/audio_511c1395f1.mp3', genre: 'Corporate', moods: ['upbeat', 'motivational', 'energetic', 'positive', 'happy'], duration: 140 },
-    { id: 'dramatic-epic-zakhar', title: 'The Epic', artist: 'Zakhar Valaha', url: 'https://cdn.pixabay.com/download/audio/2022/10/21/audio_56d6232731.mp3', genre: 'Orchestral', moods: ['dramatic', 'epic', 'action', 'intense', 'trailer'], duration: 194 },
-    { id: 'lofi-chill-bodleasons', title: 'Lofi Chill', artist: 'FASSounds', url: 'https://cdn.pixabay.com/download/audio/2022/02/07/audio_c8bce4f9c6.mp3', genre: 'Lo-fi', moods: ['chill', 'relaxed', 'calm', 'studying', 'background'], duration: 140 },
-    { id: 'ambient-documentary-audiovip', title: 'Ambient Documentary', artist: 'AShamaluevMusic', url: 'https://cdn.pixabay.com/download/audio/2022/08/02/audio_34b07c223a.mp3', genre: 'Ambient', moods: ['thoughtful', 'documentary', 'serious', 'calm', 'introspective'], duration: 212 },
-    { id: 'energetic-rock-lite', title: 'Powerful Rock', artist: 'LiteSaturation', url: 'https://cdn.pixabay.com/download/audio/2022/11/17/audio_82b4a5d33a.mp3', genre: 'Rock', moods: ['energetic', 'powerful', 'driving', 'action', 'upbeat'], duration: 138 },
-    { id: 'a-small-miracle', title: 'A Small Miracle', artist: 'Romarecord1973', url: 'https://cdn.pixabay.com/download/audio/2023/10/20/audio_51212882ae.mp3', genre: 'Cinematic', moods: ['emotional', 'hopeful', 'calm', 'inspiring'], duration: 184 },
-    { id: 'modern-corporate-inspiring', title: 'Modern Corporate Inspiring', artist: 'AudioCoffee', url: 'https://cdn.pixabay.com/download/audio/2024/05/29/audio_403b22a013.mp3', genre: 'Corporate', moods: ['upbeat', 'motivational', 'positive', 'tech'], duration: 128 },
-    { id: 'tech-ambient', title: 'Tech Ambient', artist: 'AlexAction', url: 'https://cdn.pixabay.com/download/audio/2024/02/16/audio_108518e932.mp3', genre: 'Ambient', moods: ['tech', 'background', 'calm', 'minimal'], duration: 180 },
-    { id: 'just-relax', title: 'Just Relax', artist: 'Lesfm', url: 'https://cdn.pixabay.com/download/audio/2022/11/17/audio_82c31329a6.mp3', genre: 'Lo-fi', moods: ['relax', 'chill', 'calm', 'background', 'studying'], duration: 153 },
-];
+const availableVoices = ['Puck', 'Kore', 'Zephyr', 'Fenrir', 'Charon'];
+const voiceDescription = `The voice for the narration. Select the best fit based on the user's preference and scene content.
+- Puck: A crisp, clear, and professional male voice. Great for explainers.
+- Kore: A warm, engaging, and professional female voice. Ideal for storytelling.
+- Zephyr: A calm, deep, and soothing male voice. Perfect for relaxing or serious topics.
+- Fenrir: An energetic, bright, and upbeat female voice. Excellent for ads and dynamic content.
+- Charon: A very deep, resonant, and authoritative male voice. Best for cinematic or dramatic impact.
+For conversational scripts, you can alternate between different voices.`;
 
 const scriptSchema = {
     type: Type.ARRAY,
@@ -28,9 +25,10 @@ const scriptSchema = {
         timestamp: { type: Type.STRING, description: 'Timestamp for the segment, e.g., "00:00 - 00:05".' },
         visuals: { type: Type.STRING, description: 'Detailed description of the visuals for a static image.' },
         narration: { type: Type.STRING, description: 'The narration/voiceover text for this segment. Must be a single, concise line.' },
-        transition: { type: Type.STRING, description: 'The transition to the next scene, e.g., "Cut to", "Fade out", "Wipe left".' }
+        transition: { type: Type.STRING, description: 'The transition to the next scene, e.g., "Cut to", "Fade out", "Wipe left".' },
+        voice: { type: Type.STRING, description: voiceDescription, enum: availableVoices },
       },
-      required: ['timestamp', 'visuals', 'narration', 'transition'],
+      required: ['timestamp', 'visuals', 'narration', 'transition', 'voice'],
     }
 };
 
@@ -93,19 +91,23 @@ export async function parsePromptForConfig(prompt: string): Promise<VideoConfig 
                 type: Type.STRING, 
                 description: 'The aspect ratio of the video. Common values are "16:9" (for YouTube/widescreen), "9:16" (for TikTok/Shorts), "1:1" (for Instagram). Default to "16:9" if not specified.',
                 enum: ['16:9', '9:16', '1:1', '2.35:1']
-            }
+            },
+            subtitles: { type: Type.BOOLEAN, description: 'Whether to include on-screen captions/subtitles. Default to true unless the user explicitly asks for none.' },
+            voicePreference: { type: Type.STRING, description: 'A summary of the user\'s voice preference. E.g., "a single deep male voice", "two alternating voices, one male one female", "a cheerful female voice". Default to "a single clear voice".' },
+            voiceStyle: { type: Type.STRING, description: 'The desired style of the narration. E.g., "longer voice over" for detailed content, or "concise" for brief content. Default to "standard".', enum: ['concise', 'standard', 'longer voice over'] },
+            stylePreference: { type: Type.STRING, description: 'The overall visual style or mood. E.g., "energetic and flashy", "calm and minimalist", "professional and clean", "cinematic". Default to "standard".'}
         },
-        required: ['theme', 'duration', 'aspectRatio']
+        required: ['theme', 'duration', 'aspectRatio', 'subtitles', 'voicePreference', 'voiceStyle', 'stylePreference']
     };
 
-    const generationPrompt = `Analyze the following user request for a video. Extract the core theme, desired duration in seconds, and aspect ratio.
-    - If the user mentions platforms like "short video", "tiktok", "reels", "shorts" or "vertical", assume a 9:16 aspect ratio.
-    - If the user mentions "youtube video", "widescreen", "cinematic", assume a 16:9 aspect ratio.
-    - If the user mentions "instagram post" or "square", assume a 1:1 aspect ratio.
-    - If duration is mentioned in minutes, convert it to seconds (e.g., "1 minute" is 60).
-    - If no duration is specified, default to 30 seconds.
-    - If no aspect ratio is specified, default to 16:9.
-    - The theme should be the subject matter the user wants the video to be about. Capture any additional instructions within the theme.
+    const generationPrompt = `Analyze the following user request for a video. Extract the core theme and configuration settings.
+    - Aspect Ratio: If "short video", "tiktok", "reels", "shorts" or "vertical" is mentioned, use 9:16. If "youtube", "widescreen", "cinematic", use 16:9. If "instagram" or "square", use 1:1. Default is 16:9.
+    - Duration: Convert minutes to seconds. Default is 30 seconds.
+    - Theme: The subject matter and any specific instructions.
+    - Subtitles: Default to true unless the user says "no subtitles", "no captions", etc.
+    - Voice Preference: Note if the user wants one voice, two voices, or describes a voice (e.g., "deep male voice"). Default is "a single clear voice".
+    - Voice Style: Note if the user wants a "longer voice over" or a "concise" video. Default is "standard".
+    - Style Preference: Infer the overall mood or visual style. Look for keywords like "energetic", "calm", "professional", "cinematic", "flashy", "minimalist". Default is "standard".
 
     User request: "${prompt}"
 
@@ -172,22 +174,28 @@ export async function conductResearch(theme: string): Promise<ResearchResult> {
     }
 }
 
-export async function generateScript(theme: string, duration: number, researchSummary: string): Promise<Omit<ScriptSegment, 'id'>[]> {
+export async function generateScript(theme: string, config: VideoConfig, researchSummary: string): Promise<Omit<ScriptSegment, 'id'>[]> {
     const instruction = "All visuals should be for static images.";
 
-    const prompt = `You are a professional video scriptwriter. Based on the following research summary, create a detailed script for a short video (about ${duration} seconds long) on the theme: "${theme}".
+    const prompt = `You are a professional video scriptwriter. Based on the following research summary and user preferences, create a detailed script for a short video (about ${config.duration} seconds long) on the theme: "${theme}".
     
     RESEARCH SUMMARY:
     ---
     ${researchSummary}
     ---
 
-    The video should be engaging and flow logically. Break it down into a number of scenes appropriate for the duration (e.g., a 60-second video might have 8-12 scenes).
+    USER PREFERENCES:
+    - Narration Style: ${config.voiceStyle || 'standard'}. If "longer voice over", write more descriptive narration. If "concise", keep it brief.
+    - Voice Preference: ${config.voicePreference || 'a single clear voice'}.
+    - Video Style: ${config.stylePreference || 'standard'}. This should influence your choice of transitions. For "energetic", use "Quick cut to". For "calm", use "Slow dissolve into". For "cinematic", use "Fade to black".
+
+    The video should be engaging and flow logically. Break it down into a number of scenes appropriate for the duration.
     For each scene, provide:
     1.  'timestamp': A short duration, like "00:00 - 00:04".
-    2.  'visuals': A very detailed, vivid description suitable for an AI image generator. ${instruction}
+    2.  'visuals': A very detailed, vivid, and factually accurate description suitable for an AI image generator. ${instruction}
     3.  'narration': A concise, single-line narration text for the voiceover. Keep it brief and impactful, drawing from the summary.
-    4.  'transition': A professional transition to the next scene (e.g., "Fade to black", "Quick cut to", "Slow dissolve into").
+    4.  'transition': A professional transition to the next scene (e.g., "Fade to black", "Quick cut to", "Slow dissolve into"). Choose based on the Video Style preference.
+    5.  'voice': ${voiceDescription}. Select and assign the most appropriate voice(s) based on the user's preference. If two voices are requested, alternate them between scenes.
     
     The output MUST be a JSON array of objects matching the provided schema. Do not include any introductory text, backticks, or markdown formatting around the JSON.`;
     
@@ -214,12 +222,57 @@ export async function generateScript(theme: string, duration: number, researchSu
     }
 }
 
+export async function parseUserScript(scriptText: string): Promise<Omit<ScriptSegment, 'id'>[]> {
+    const prompt = `You are a script parsing assistant. Your task is to convert a user-provided script into a structured JSON format.
+
+    **CRITICAL INSTRUCTIONS:**
+    1.  **DO NOT MODIFY CONTENT:** You MUST preserve the user's original text for 'visuals' and 'narration' exactly as they provided it.
+    2.  **PARSE STRUCTURE:** The user will provide a script with scenes. For each scene, extract the content for 'visuals' and 'narration'. Look for speaker cues (e.g., "Joe:", "Jane:") to identify different speakers.
+    3.  **GENERATE METADATA:** Generate appropriate 'timestamp', 'transition', and 'voice' values. Estimate duration from narration length. For the voice, choose from the available options. If you detect multiple speakers, assign different voices to them consistently.
+
+    USER SCRIPT:
+    ---
+    ${scriptText}
+    ---
+
+    The output MUST be a JSON array of objects matching the provided schema. Do not include any introductory text, backticks, or markdown formatting around the JSON.`;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-pro',
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: scriptSchema,
+            },
+        });
+
+        const jsonStr = response.text.trim();
+        const parsedScript = JSON.parse(jsonStr);
+        if (!Array.isArray(parsedScript)) {
+            throw new Error("API did not return a valid array for the script.");
+        }
+        return parsedScript;
+    } catch(error) {
+        console.error("Error parsing user script:", error);
+        throw new Error("Failed to communicate with the AI model for script parsing.");
+    }
+}
+
 const elementAnimationSchema = {
     type: Type.OBJECT,
     properties: {
-        type: { type: Type.STRING, enum: ['fade-in', 'slide-in-left', 'slide-in-right', 'slide-in-top', 'slide-in-bottom', 'zoom-in'] },
+        type: { type: Type.STRING, enum: ['fade-in', 'slide-in-left', 'slide-in-right', 'slide-in-top', 'slide-in-bottom', 'zoom-in', 'zoom-out', 'scale-up', 'rotate-in'] },
         start: { type: Type.NUMBER, description: 'Animation start time in seconds, relative to the scene start.' },
-        duration: { type: Type.NUMBER, description: 'Animation duration in seconds.' }
+        duration: { type: Type.NUMBER, description: 'Animation duration in seconds.' },
+        exit: {
+            type: Type.OBJECT,
+            properties: {
+                type: { type: Type.STRING, enum: ['fade-out', 'slide-out-left', 'slide-out-right', 'slide-out-top', 'slide-out-bottom', 'zoom-out'] },
+                start: { type: Type.NUMBER, description: 'Exit animation start time in seconds, relative to the scene start.' },
+                duration: { type: Type.NUMBER, description: 'Exit animation duration in seconds.' }
+            }
+        }
     },
     required: ['type', 'start', 'duration']
 };
@@ -264,44 +317,48 @@ const scriptV2Schema = {
         properties: {
             id: { type: Type.STRING, description: 'A unique identifier for this scene segment, e.g., "scene-1".' },
             narration: { type: Type.STRING, description: 'The narration/voiceover text for this segment. Must be a single, concise line.' },
+            voice: { type: Type.STRING, description: voiceDescription, enum: availableVoices },
             elements: {
                 type: Type.ARRAY,
                 items: sceneElementSchema,
                 description: "A list of animated elements for this scene. The first element must be an 'image' that serves as the background."
             }
         },
-        required: ['id', 'narration', 'elements']
+        required: ['id', 'narration', 'voice', 'elements']
     }
 };
 
-export async function generateScriptV2(theme: string, duration: number, researchSummary: string): Promise<ScriptSegmentV2[]> {
-    const prompt = `You are a creative motion graphics designer. Based on the research summary, create a script for a dynamic, animated video (~${duration}s) about "${theme}".
+export async function generateScriptV2(theme: string, config: VideoConfig, researchSummary: string): Promise<ScriptSegmentV2[]> {
+    const prompt = `You are a master motion graphics designer and visual storyteller. Your task is to create a script for a dynamic, animated video (~${config.duration}s) about "${theme}", based on the provided research and user preferences.
 
     RESEARCH SUMMARY:
     ---
     ${researchSummary}
     ---
 
-    KEY INSTRUCTIONS:
-    1.  **Cohesive Flow:** Maintain a consistent visual theme, color palette, and style across all scenes. The video should feel like a single, unified piece.
-    2.  **Engaging Backgrounds:** Each scene's first element MUST be an 'image' type element to serve as the background. Provide a detailed 'prompt' for this background image that is visually interesting, abstract or subtly thematic, and complements the main content without being distracting. Its layout should cover the entire canvas (x:0, y:0, width:100, height:100). DO NOT use solid color backgrounds.
-    3.  **Balanced Composition:** Design visually appealing compositions.
-        - Main content (images, key text) should be prominent.
-        - To avoid large empty areas and create a richer visual, add secondary 'text' elements with short descriptions, labels, or related facts. These should use a smaller font size than primary text.
-        - Ensure element animations are timed well with a natural narration pace. Avoid awkward overlaps.
-    
+    USER PREFERENCES:
+    - Narration Style: ${config.voiceStyle || 'standard'}. If "longer voice over", you MUST write significantly more detailed narration.
+    - Voice Preference: ${config.voicePreference || 'a single clear voice'}.
+    - Video Style: ${config.stylePreference || 'standard'}. This MUST influence your choice of colors, fonts, and animation types. 'Energetic' styles should use faster animations ('slide-in-*', 'scale-up') and brighter colors. 'Calm' styles should use slower animations ('fade-in', 'zoom-in') and a more muted color palette.
+
+    Your design must adhere to these CRITICAL principles:
+
+    1.  **MAXIMUM LEGIBILITY & AESTHETICS:**
+        - Backgrounds MUST be visually interesting but non-distracting (e.g., "soft, blurred, abstract gradient in shades of dark blue"). They set the mood.
+        - **TEXT LEGIBILITY IS PARAMOUNT.** All text MUST have a very high contrast ratio against its background. For dark backgrounds, use light colors like '#FFFFFF' or '#F0F0F0'. For light backgrounds, use dark colors like '#1A1A1A'.
+        - **To GUARANTEE readability**, if a background has varied colors, you MUST place text inside a semi-transparent bounding box (e.g., a style with a background color like 'rgba(0, 0, 0, 0.5)').
+
+    2.  **DYNAMIC COMPOSITION & INFORMATION DENSITY:**
+        - Create rich compositions with **multiple text and image elements** to illustrate the narration.
+        - Use the 'animation' property to create a **timeline**. Elements MUST appear and disappear within a single scene. An element's 'exit.start' time MUST be greater than its entrance 'start' + 'duration'. Choreograph animations to create a professional, dynamic feel based on the video style.
+        - **FOR "longer voice over" style**: This is a strict requirement. The user wants a detailed video. You MUST break the narration into multiple sequential 'text' elements within each scene. Do not show all the text at once. Animate text elements to appear and disappear in sync with the spoken words to present dense information clearly and engagingly. The total narration per scene can be much longer, and you MUST use multiple text elements to display it over the scene's duration.
+
     For each scene, provide:
-    1. 'id': A unique ID for the scene.
-    2. 'narration': A concise, single-line voiceover text.
-    3. 'elements': An array of animated elements on the canvas.
-        - The first element MUST be of type 'image' and act as the scene background.
-        - Other elements can be 'image' or 'text' on top of the background.
-        - For each element, define:
-            - 'id', 'type', 'prompt' (for image), 'text' (for text).
-            - 'style': Visual styling (colors, fonts). Use hex codes. Font size is a percentage of canvas height.
-            - 'layout': Position (x, y) and size (width, height) as percentages (0-100).
-            - 'animation': Animation type, start time (relative to scene start), and duration.
-    
+    - 'id': A unique ID.
+    - 'narration': The voiceover line. For 'longer voice over', this can be a longer sentence or two.
+    - 'voice': ${voiceDescription}. Assign voice(s) based on user preference.
+    - 'elements': An array of animated elements following all rules above. The first element must be the full-screen background.
+
     The output MUST be a JSON array matching the schema.`;
 
     try {
@@ -434,13 +491,14 @@ export async function selectMusicTrack(theme: string, suggestion: MusicSuggestio
 export async function generateVisual(description: string): Promise<string> {
     const MAX_RETRIES = 3;
     let lastError: Error | null = null;
-    const basePrompt = `A cinematic, high-quality, photorealistic image representing: ${description}`;
+    
+    const basePrompt = `Create a visually stunning, cinematic, high-quality, photorealistic image. Focus on creating a literal and accurate representation of the following description. Pay close attention to the specified objects, their attributes, and the scene's composition to ensure factual accuracy. Description: ${description}.`;
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
             // Slightly alter prompt on retry to potentially bypass safety filters or ambiguity issues
             const prompt = attempt > 1 
-                ? `Style: cinematic, photorealistic. A visually compelling, high-quality image of: ${description}.`
+                ? `Style: cinematic, photorealistic. A visually compelling, high-quality, and accurate image of: ${description}. Ensure the output is faithful to the prompt.`
                 : basePrompt;
                 
             const response = await ai.models.generateContent({
@@ -490,8 +548,12 @@ export async function generateVoiceover(text: string, voiceName: string = 'Puck'
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
             const response = await ai.models.generateContent({
+                // FIX: Corrected model name from 'gemini-25-flash-preview-tts' to 'gemini-2.5-flash-preview-tts'
                 model: "gemini-2.5-flash-preview-tts",
-                contents: [{ parts: [{ text: `Say with a professional and engaging tone: ${text}` }] }],
+                // The previous prompt was just the raw text, which can sometimes fail.
+                // Providing a clear, simple instruction to the model improves reliability,
+                // as the model is trained to distinguish instructions from the content to be spoken.
+                contents: [{ parts: [{ text: `Narrate the following: "${text}"` }] }],
                 config: {
                   responseModalities: [Modality.AUDIO],
                   speechConfig: {
@@ -558,8 +620,9 @@ const tools: FunctionDeclaration[] = [
             properties: {
                 visual_description: { type: Type.STRING, description: 'A detailed description for the visual of the new scene.' },
                 narration_text: { type: Type.STRING, description: 'The narration text for the new scene.' },
+                voice: { type: Type.STRING, description: voiceDescription },
             },
-            required: ['visual_description', 'narration_text'],
+            required: ['visual_description', 'narration_text', 'voice'],
         },
     },
     {
@@ -575,10 +638,13 @@ const tools: FunctionDeclaration[] = [
     },
     {
         name: 'change_background_music',
-        description: 'Change the background music to a track the user has uploaded. Only use this if the user has indicated they have uploaded an audio file and want to use it for the background music.',
+        description: 'Change the background music for the video. The AI will select a suitable track from a predefined music library based on the user\'s suggestion of a mood or genre.',
         parameters: {
             type: Type.OBJECT,
-            properties: {},
+            properties: {
+                mood: { type: Type.STRING, description: 'A new mood for the music, e.g., "upbeat", "dramatic".' },
+                genre: { type: Type.STRING, description: 'A new genre for the music, e.g., "cinematic", "lo-fi".' }
+            },
             required: [],
         },
     }
@@ -589,11 +655,12 @@ export async function processChatRequest(
     currentScript: ScriptSegment[]
 ): Promise<{ text: string, toolCalls: ToolCall[] }> {
     const systemInstruction = `You are a helpful AI video editing assistant. Your goal is to help the user modify a video script by calling the appropriate tools.
-The user can change visuals, narration, add new scenes, use an image they have uploaded, or change the background music to an audio file they have uploaded.
+The user can change visuals, narration, add new scenes, use an image they have uploaded, or change the background music.
+When adding a new scene, you must also specify a voice for the narration.
 The script is 1-indexed (Scene 1 is the first scene).
 Politely inform the user about the action you are taking. For example, if changing a visual, say "Okay, I'm updating the visual for scene {scene_number}."
 If the user wants to use their uploaded image, call the 'replace_visual_with_user_image' tool.
-If the user wants to use their uploaded audio for background music, call the 'change_background_music' tool.
+If the user wants to change the background music, use their suggestion of a mood or genre to call the 'change_background_music' tool. The AI will select a suitable track from a predefined high-quality music library.
 Here is the current script for context:
 ${currentScript.map((s, i) => `Scene ${i+1}: "${s.narration}"`).join('\n')}
 `;

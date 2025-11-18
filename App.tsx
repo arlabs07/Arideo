@@ -8,12 +8,69 @@ import ScriptDisplay from './components/ScriptDisplay';
 import VideoPreview from './components/VideoPreview';
 import Loader from './components/Loader';
 import ResearchDisplay from './components/ResearchDisplay';
-import { CheckIcon } from './components/icons/CheckIcon';
 import { ArideoLogo } from './ArideoLogo';
 import DownloadPage from './components/DownloadPage';
 
 type AppView = 'prompt' | 'generating' | 'download';
 type AppStep = 'theme' | 'research' | 'script' | 'preview';
+
+async function processInBatches<T>(
+  tasks: (() => Promise<T>)[],
+  initialBatchSize: number,
+  onProgress?: (completed: number, total: number) => void
+): Promise<T[]> {
+  // Create a queue of tasks with their original indices
+  let taskQueue = tasks.map((task, index) => ({ task, index }));
+  const results: Array<T | undefined> = new Array(tasks.length).fill(undefined);
+  
+  let batchSize = initialBatchSize;
+  let failureCount = 0;
+  const FAILURE_THRESHOLD = 3;
+
+  while (taskQueue.length > 0) {
+    const batch = taskQueue.splice(0, batchSize);
+    
+    const outcomes = await Promise.allSettled(batch.map(item => item.task()));
+
+    const failedInBatch: typeof batch = [];
+
+    outcomes.forEach((outcome, i) => {
+      const taskItem = batch[i];
+      if (outcome.status === 'fulfilled') {
+        results[taskItem.index] = outcome.value;
+      } else {
+        console.warn(`Task at index ${taskItem.index} failed:`, outcome.reason);
+        failureCount++;
+        failedInBatch.push(taskItem);
+      }
+    });
+
+    const completedSoFar = results.filter(r => r !== undefined).length;
+    if (onProgress) {
+      onProgress(completedSoFar, tasks.length);
+    }
+    
+    if (failedInBatch.length > 0) {
+      // Put failed tasks back at the front of the queue to be retried
+      taskQueue.unshift(...failedInBatch);
+
+      if (failureCount >= FAILURE_THRESHOLD && batchSize > 1) {
+        console.log(`Switching to serial processing (batch size 1) after ${failureCount} failures.`);
+        batchSize = 1;
+      }
+      // Delay before next attempt to avoid hammering the API
+      await new Promise(resolve => setTimeout(resolve, 1500));
+    }
+  }
+  
+  if (results.some(r => r === undefined)) {
+      // This path is taken if a task fails all its internal retries and we decide not to retry at this level infinitely.
+      // Since we are retrying for now, this error is for robustness.
+      throw new Error("Could not complete all tasks. Some tasks may have failed permanently.");
+  }
+
+  return results as T[];
+}
 
 const AppStepper: React.FC<{ currentStep: AppStep }> = ({ currentStep }) => {
     const steps: AppStep[] = ['research', 'script', 'preview'];
@@ -36,7 +93,7 @@ const AppStepper: React.FC<{ currentStep: AppStep }> = ({ currentStep }) => {
                         <React.Fragment key={step}>
                             <div className="flex flex-col items-center text-center w-24">
                                 <div className={`w-10 h-10 rounded-full flex items-center justify-center border-2 transition-all duration-300 ${isCompleted ? 'bg-indigo-600 border-indigo-500' : isActive ? 'border-indigo-500 shadow-lg shadow-indigo-500/30' : 'bg-gray-800 border-gray-700'}`}>
-                                    {isCompleted ? <CheckIcon className="w-6 h-6 text-white"/> : <span className={`font-bold text-lg ${isActive ? 'text-indigo-400' : 'text-gray-500'}`}>{index + 1}</span>}
+                                    {isCompleted ? <span className="material-symbols-outlined text-white">check</span> : <span className={`font-bold text-lg ${isActive ? 'text-indigo-400' : 'text-gray-500'}`}>{index + 1}</span>}
                                 </div>
                                 <p className={`mt-2 text-xs font-semibold tracking-wider uppercase ${isActive || isCompleted ? 'text-white' : 'text-gray-500'}`}>{stepNames[step as Exclude<AppStep, 'theme'>]}</p>
                             </div>
@@ -149,9 +206,97 @@ function App() {
     }
   };
   
-  const handleGenerateFromOverlay = (prompt: string, newWatermark: string | null) => {
-    setActiveOverlay(null);
-    handleGenerateFromPrompt(prompt, newWatermark, null);
+  const handleGenerateFromCustomScript = useCallback(async (scriptText: string, config: VideoConfig, newWatermark: string | null) => {
+    setGenerationVersion('v1');
+    setTheme("Custom Script");
+    setVideoConfig(config);
+    setWatermark(newWatermark);
+
+    setIsLoading(true);
+    setError(null);
+    setAppView('generating');
+    setCurrentStep('script');
+    setLoadingMessage("Parsing your custom script...");
+
+    try {
+        const parsedScript = await geminiService.parseUserScript(scriptText);
+        const scriptWithIds = parsedScript.map((segment, index) => ({
+            ...segment,
+            id: `segment-${index}-${Date.now()}`,
+        }));
+        setScript(scriptWithIds);
+
+        setLoadingMessage('Analyzing tone for background music...');
+        const fullNarration = scriptWithIds.map(s => s.narration).join('\n');
+        const suggestion = await geminiService.generateMusicSuggestion(fullNarration);
+        setMusicSuggestion(suggestion);
+
+        setLoadingMessage('Preparing video generation...');
+        setMediaAssets(null);
+        setVoiceovers(new Map());
+        setSelectedMusic(null);
+        setCurrentStep('preview');
+
+        setLoadingMessage('Selecting background music...');
+        const musicTrack = await geminiService.selectMusicTrack("Custom Script", suggestion);
+        setSelectedMusic(musicTrack);
+
+        const CONCURRENCY_LIMIT = 5;
+
+        setLoadingMessage(`Generating ${scriptWithIds.length} visuals... (0/${scriptWithIds.length})`);
+        const visualTasks = scriptWithIds.map(segment => () => geminiService.generateVisual(segment.visuals.trim()));
+        const visualUrls = await processInBatches(visualTasks, CONCURRENCY_LIMIT, (completed, total) => {
+            setLoadingMessage(`Generating ${total} visuals... (${completed}/${total})`);
+        });
+        
+        setLoadingMessage(`Synthesizing ${scriptWithIds.length} voiceovers... (0/${scriptWithIds.length})`);
+        const voiceoverTasks = scriptWithIds.map(segment => () => geminiService.generateVoiceover(segment.narration, segment.voice || 'Puck'));
+        const voiceoverB64s = await processInBatches(voiceoverTasks, CONCURRENCY_LIMIT, (completed, total) => {
+            setLoadingMessage(`Synthesizing ${total} voiceovers... (${completed}/${total})`);
+        });
+
+        setLoadingMessage('Decoding audio...');
+        const decodedVoiceoverPromises = voiceoverB64s.map(audioB64 => {
+            const decodedAudio = decode(audioB64);
+            return decodeAudioData(decodedAudio, audioContext, 24000, 1);
+        });
+        const audioBuffers = await Promise.all(decodedVoiceoverPromises);
+        
+        const newMediaAssets = scriptWithIds.map((segment, index) => ({
+            segmentId: segment.id,
+            type: 'image' as const,
+            url: visualUrls[index],
+            description: segment.visuals.trim()
+        }));
+
+        const newVoiceovers = new Map<string, AudioBuffer>();
+        scriptWithIds.forEach((segment, index) => {
+            newVoiceovers.set(segment.id, audioBuffers[index]);
+        });
+
+        setMediaAssets(newMediaAssets);
+        setVoiceovers(newVoiceovers);
+
+    } catch (e) {
+        console.error('Custom script generation failed:', e);
+        setError(e instanceof Error ? e.message : 'Could not process your script. Please check the formatting.');
+        handleReset();
+    } finally {
+        setIsLoading(false);
+    }
+  }, [audioContext, handleReset]);
+
+
+  const handleGenerateFromOverlay = (
+    data: { type: 'prompt', prompt: string } | { type: 'script', scriptText: string, config: VideoConfig },
+    newWatermark: string | null
+  ) => {
+      setActiveOverlay(null);
+      if (data.type === 'script') {
+          handleGenerateFromCustomScript(data.scriptText, data.config, newWatermark);
+      } else {
+          handleGenerateFromPrompt(data.prompt, newWatermark, null);
+      }
   };
 
   const handleScriptGenerationV1 = useCallback(async () => {
@@ -165,7 +310,7 @@ function App() {
     setCurrentStep('script');
 
     try {
-      const generatedScript = await geminiService.generateScript(theme, videoConfig.duration, researchData.summary);
+      const generatedScript = await geminiService.generateScript(theme, videoConfig, researchData.summary);
       const scriptWithIds = generatedScript.map((segment, index) => ({
         ...segment,
         id: `segment-${index}-${Date.now()}`,
@@ -194,7 +339,7 @@ function App() {
     try {
         setCurrentStep('script');
         setLoadingMessage('Designing animated scenes (V2)...');
-        const generatedScriptV2 = await geminiService.generateScriptV2(theme, videoConfig.duration, researchData.summary);
+        const generatedScriptV2 = await geminiService.generateScriptV2(theme, videoConfig, researchData.summary);
         setScriptV2(generatedScriptV2);
 
         setLoadingMessage('Analyzing tone for background music...');
@@ -206,33 +351,40 @@ function App() {
         const musicTrack = await geminiService.selectMusicTrack(theme, suggestion);
         setSelectedMusic(musicTrack);
 
-        const newMediaAssetsV2 = new Map<string, string>();
-        const newVoiceovers = new Map<string, AudioBuffer>();
-
-        const imageElements: { sceneId: string, element: SceneElement }[] = generatedScriptV2.flatMap(scene =>
-            scene.elements.filter(e => e.type === 'image').map(element => ({ sceneId: scene.id, element }))
+        const imageElements = generatedScriptV2.flatMap(scene =>
+            scene.elements.filter(e => e.type === 'image' && e.prompt).map(element => ({ sceneId: scene.id, element }))
         );
 
-        const totalAssets = imageElements.length + generatedScriptV2.length;
-        let assetsGenerated = 0;
+        const CONCURRENCY_LIMIT = 5;
 
-        for (const { element } of imageElements) {
-            assetsGenerated++;
-            setLoadingMessage(`[${assetsGenerated}/${totalAssets}] Generating visual asset...`);
-            if (element.prompt) {
-                const mediaUrl = await geminiService.generateVisual(element.prompt);
-                newMediaAssetsV2.set(element.id, mediaUrl);
-            }
-        }
-
-        for (const scene of generatedScriptV2) {
-            assetsGenerated++;
-            setLoadingMessage(`[${assetsGenerated}/${totalAssets}] Synthesizing voice...`);
-            const audioB64 = await geminiService.generateVoiceover(scene.narration, 'Puck');
+        setLoadingMessage(`Generating ${imageElements.length} visual assets... (0/${imageElements.length})`);
+        const visualTasks = imageElements.map(({ element }) => () => geminiService.generateVisual(element.prompt!));
+        const visualUrls = await processInBatches(visualTasks, CONCURRENCY_LIMIT, (completed, total) => {
+            setLoadingMessage(`Generating ${total} visual assets... (${completed}/${total})`);
+        });
+        
+        const newMediaAssetsV2 = new Map<string, string>();
+        imageElements.forEach(({ element }, index) => {
+            newMediaAssetsV2.set(element.id, visualUrls[index]);
+        });
+        
+        setLoadingMessage(`Synthesizing ${generatedScriptV2.length} voiceovers... (0/${generatedScriptV2.length})`);
+        const voiceoverTasks = generatedScriptV2.map(scene => () => geminiService.generateVoiceover(scene.narration, scene.voice || 'Puck'));
+        const voiceoverB64s = await processInBatches(voiceoverTasks, CONCURRENCY_LIMIT, (completed, total) => {
+            setLoadingMessage(`Synthesizing ${total} voiceovers... (${completed}/${total})`);
+        });
+        
+        setLoadingMessage('Decoding audio...');
+        const decodedVoiceoverPromises = voiceoverB64s.map(audioB64 => {
             const decodedAudio = decode(audioB64);
-            const audioBuffer = await decodeAudioData(decodedAudio, audioContext, 24000, 1);
-            newVoiceovers.set(scene.id, audioBuffer);
-        }
+            return decodeAudioData(decodedAudio, audioContext, 24000, 1);
+        });
+        const audioBuffers = await Promise.all(decodedVoiceoverPromises);
+        
+        const newVoiceovers = new Map<string, AudioBuffer>();
+        generatedScriptV2.forEach((scene, index) => {
+            newVoiceovers.set(scene.id, audioBuffers[index]);
+        });
 
         setMediaAssetsV2(newMediaAssetsV2);
         setVoiceovers(newVoiceovers);
@@ -276,38 +428,49 @@ function App() {
     setCurrentStep('preview');
 
     try {
-      const voiceName = 'Puck'; // Default voice
-      
       setLoadingMessage('Selecting background music...');
       const musicTrack = await geminiService.selectMusicTrack(theme, musicSuggestion);
       setSelectedMusic(musicTrack);
 
-      const newMediaAssets: MediaAsset[] = [];
-      const newVoiceovers = new Map<string, AudioBuffer>();
+      const CONCURRENCY_LIMIT = 5;
 
-      for (const [index, segment] of script.entries()) {
-          const sceneNum = index + 1;
-          const totalScenes = script.length;
-          const visualPrompt = segment.visuals.trim();
-          
-          setLoadingMessage(`[${sceneNum}/${totalScenes}] Generating visual...`);
-          
-          let mediaUrl: string;
-          if (index === 0 && initialImageAsset) {
-              mediaUrl = initialImageAsset;
-              setInitialImageAsset(null); // Consume the image
-          } else {
-              mediaUrl = await geminiService.generateVisual(visualPrompt);
-          }
-          
-          setLoadingMessage(`[${sceneNum}/${totalScenes}] Synthesizing voice...`);
-          const audioB64 = await geminiService.generateVoiceover(segment.narration, voiceName);
+      setLoadingMessage(`Generating ${script.length} visuals... (0/${script.length})`);
+      const visualTasks = script.map((segment, index) => {
+        if (index === 0 && initialImageAsset) {
+          return () => Promise.resolve(initialImageAsset);
+        }
+        return () => geminiService.generateVisual(segment.visuals.trim());
+      });
+      const visualUrls = await processInBatches(visualTasks, CONCURRENCY_LIMIT, (completed, total) => {
+        setLoadingMessage(`Generating ${total} visuals... (${completed}/${total})`);
+      });
+
+      if (initialImageAsset) setInitialImageAsset(null); // Consume the image
+
+      setLoadingMessage(`Synthesizing ${script.length} voiceovers... (0/${script.length})`);
+      const voiceoverTasks = script.map(segment => () => geminiService.generateVoiceover(segment.narration, segment.voice || 'Puck'));
+      const voiceoverB64s = await processInBatches(voiceoverTasks, CONCURRENCY_LIMIT, (completed, total) => {
+        setLoadingMessage(`Synthesizing ${total} voiceovers... (${completed}/${total})`);
+      });
+      
+      setLoadingMessage('Decoding audio...');
+      const decodedVoiceoverPromises = voiceoverB64s.map(audioB64 => {
           const decodedAudio = decode(audioB64);
-          const audioBuffer = await decodeAudioData(decodedAudio, audioContext, 24000, 1);
+          return decodeAudioData(decodedAudio, audioContext, 24000, 1);
+      });
+      const audioBuffers = await Promise.all(decodedVoiceoverPromises);
 
-          newMediaAssets.push({ segmentId: segment.id, type: 'image', url: mediaUrl, description: visualPrompt });
-          newVoiceovers.set(segment.id, audioBuffer);
-      }
+      const newMediaAssets = script.map((segment, index) => ({
+          segmentId: segment.id,
+          type: 'image' as const,
+          url: visualUrls[index],
+          description: segment.visuals.trim(),
+      }));
+      
+      const newVoiceovers = new Map<string, AudioBuffer>();
+      script.forEach((segment, index) => {
+          newVoiceovers.set(segment.id, audioBuffers[index]);
+      });
       
       setMediaAssets(newMediaAssets);
       setVoiceovers(newVoiceovers);

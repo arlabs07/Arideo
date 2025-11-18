@@ -1,5 +1,4 @@
 import React from 'react';
-import { LinkIcon } from './icons/LinkIcon';
 
 interface ResearchDisplayProps {
   researchData: {
@@ -31,7 +30,7 @@ const ResearchDisplay: React.FC<ResearchDisplayProps> = ({ researchData, onConti
             <ul className="space-y-3 max-h-48 overflow-y-auto pr-2">
               {researchData.sources.map((source, index) => (
                 <li key={index} className="flex items-start gap-3">
-                  <LinkIcon className="w-5 h-5 text-indigo-400 mt-1 flex-shrink-0" />
+                  <span className="material-symbols-outlined w-5 h-5 text-indigo-400 mt-1 flex-shrink-0">link</span>
                   <a href={source.uri} target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:text-indigo-300 hover:underline transition-colors text-sm break-all">
                     {source.title || source.uri}
                   </a>
